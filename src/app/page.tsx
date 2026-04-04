@@ -77,12 +77,13 @@ export default function Home() {
           </FadeInSection>
 
           <FadeInSection>
-            <div className="relative h-96 md:h-full">
+            <div className="relative flex justify-center items-center">
               <Image
                 src="/images/oxebot-hero.png"
                 alt="OxeMedic - Mascote OxeJogos"
-                fill
-                className="object-contain"
+                width={500}
+                height={500}
+                className="object-contain w-full max-w-md h-auto"
                 priority
               />
               <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-white rounded-xl shadow-xl p-4 max-w-xs">
