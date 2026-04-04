@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
-import { GAME_MODE_CONFIG, DIFFICULTY_CONFIG } from '@/types/game';
+import { GAME_MODE_CONFIG, DIFFICULTY_CONFIG, type GameMode, type Difficulty } from '@/types/game';
 
 interface ConvitePageProps {
   params: { code: string };
@@ -30,12 +30,12 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-oxe-light to-white flex items-center justify-center px-4">
         <div className="max-w-md w-full text-center">
-          <div className="text-6xl mb-4">\ud83d\ude15</div>
+          <div className="text-6xl mb-4">😕</div>
           <h1 className="text-3xl font-fredoka font-bold text-oxe-navy mb-4">
-            Convite Inv\u00e1lido
+            Convite Inválido
           </h1>
           <p className="text-gray-600 font-nunito mb-8">
-            Desculpa, esse c\u00f3digo de convite n\u00e3o foi encontrado. Verifique se digitou corretamente.
+            Desculpa, esse código de convite não foi encontrado. Verifique se digitou corretamente.
           </p>
           <Link
             href="/lobby"
@@ -65,7 +65,7 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
         {/* Speech Bubble */}
         <div className="bg-white rounded-lg shadow-md p-4 mb-8 border-2 border-oxe-blue text-center">
           <p className="text-center font-nunito text-gray-700">
-            Oxe! Voc\u00ea foi convidado pra uma partida de OxeJogos! T\u00e1 afim?
+            Oxe! Você foi convidado pra uma partida de OxeJogos! Tá afim?
           </p>
         </div>
 
@@ -83,7 +83,7 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
                   Criada por
                 </p>
                 <p className="font-fredoka text-lg text-oxe-navy">
-                  {gameSession.captain?.full_name || 'Capit\u00e3o'}
+                  {gameSession.captain?.full_name || 'Capitão'}
                 </p>
               </div>
 
@@ -94,10 +94,10 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
                 </p>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">
-                    {GAME_MODE_CONFIG[gameSession.game_mode as any]?.emoji}
+                    {GAME_MODE_CONFIG[gameSession.game_mode as GameMode]?.emoji}
                   </span>
                   <p className="font-fredoka text-lg text-oxe-navy">
-                    {GAME_MODE_CONFIG[gameSession.game_mode as any]?.label}
+                    {GAME_MODE_CONFIG[gameSession.game_mode as GameMode]?.label}
                   </p>
                 </div>
               </div>
@@ -109,10 +109,10 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
                 </p>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">
-                    {DIFFICULTY_CONFIG[gameSession.difficulty as any]?.emoji}
+                    {DIFFICULTY_CONFIG[gameSession.difficulty as Difficulty]?.emoji}
                   </span>
                   <p className="font-fredoka text-lg text-oxe-navy">
-                    {DIFFICULTY_CONFIG[gameSession.difficulty as any]?.label}
+                    {DIFFICULTY_CONFIG[gameSession.difficulty as Difficulty]?.label}
                   </p>
                 </div>
               </div>
@@ -136,7 +136,7 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
                 href={`/lobby?join=${params.code}`}
                 className="block w-full px-6 py-3 bg-oxe-blue text-white rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all text-center"
               >
-                \u2728 Entrar na Sala
+                ✨ Entrar na Sala
               </Link>
             ) : (
               <Link
