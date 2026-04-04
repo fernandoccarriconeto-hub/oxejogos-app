@@ -12,9 +12,22 @@ interface AnthropicMessage {
 }
 
 const DIFFICULTY_INSTRUCTIONS: Record<Difficulty, string> = {
-  facim: 'N\u00edvel f\u00e1cil - perguntas que a maioria das pessoas consegue responder',
-  marromeno: 'N\u00edvel m\u00e9dio - requer algum conhecimento espec\u00edfico',
-  arrochado: 'N\u00edvel dif\u00edcil - apenas especialistas saberiam',
+  facim: 'Nível FÁCIL - perguntas de cultura geral que a maioria das pessoas consegue responder. Use fatos conhecidos e populares.',
+  marromeno: 'Nível MÉDIO - requer conhecimento específico do tema. Use fatos menos óbvios mas que uma pessoa curiosa saberia.',
+  arrochado: 'Nível DIFÍCIL - apenas entusiastas ou especialistas saberiam. Use detalhes obscuros, datas específicas, nomes pouco conhecidos.',
+};
+
+const THEME_EXAMPLES: Record<string, string> = {
+  'Medicina e Saúde': 'Ex: "Qual órgão do corpo humano é responsável por filtrar o sangue?", "Que doença é transmitida pelo mosquito Aedes aegypti?", "Qual vitamina é produzida pela exposição ao sol?"',
+  'Inteligência Artificial': 'Ex: "Quem é considerado o pai da inteligência artificial?", "Em que ano o ChatGPT foi lançado?", "Como se chama o teste criado por Alan Turing para avaliar se uma máquina pode pensar?"',
+  'Matemática': 'Ex: "Qual o único número primo que é par?", "Como se chama um polígono de 8 lados?", "Quanto é a raiz quadrada de 144?"',
+  'História': 'Ex: "Em que ano Napoleão invadiu a Espanha?", "Quem foi o primeiro presidente do Brasil?", "Em que cidade foi assinada a Declaração de Independência dos EUA?"',
+  'Geografia': 'Ex: "Qual o maior deserto do mundo?", "Que rio corta a cidade de Paris?", "Qual o país mais populoso da África?"',
+  'Esportes': 'Ex: "Quem é o piloto de F1 que mais venceu corridas?", "Em que ano o Brasil ganhou sua primeira Copa do Mundo?", "Qual o esporte mais praticado no mundo?"',
+  'Direito': 'Ex: "O que significa a sigla STF?", "Quantos anos dura o mandato de um senador no Brasil?", "Qual a idade mínima para ser presidente do Brasil?"',
+  'COMIC-CON': 'Ex: "Qual o nome verdadeiro do Homem-Aranha?", "Em que ano foi publicada a primeira HQ do Batman?", "Quem interpreta Wolverine nos filmes dos X-Men?"',
+  'Ciências': 'Ex: "Qual o símbolo químico do ouro?", "Quantos planetas tem o sistema solar?", "Qual gás as plantas absorvem durante a fotossíntese?"',
+  'Filmes, Séries e TV': 'Ex: "Quem dirigiu o filme Titanic?", "Em que ano a série Breaking Bad estreou?", "Qual ator interpretou Jack Sparrow em Piratas do Caribe?"',
 };
 
 export async function POST(request: NextRequest) {
@@ -24,29 +37,39 @@ export async function POST(request: NextRequest) {
 
     if (!theme || !difficulty) {
       return NextResponse.json(
-        { error: 'Tema e dificuldade s\u00e3o obrigat\u00f3rios' },
+        { error: 'Tema e dificuldade são obrigatórios' },
         { status: 400 }
       );
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      console.error('ANTHROPIC_API_KEY n\u00e3o configurada');
+      console.error('ANTHROPIC_API_KEY não configurada');
       return NextResponse.json(
-        { error: 'Configura\u00e7\u00e3o do servidor incompleta' },
+        { error: 'Configuração do servidor incompleta' },
         { status: 500 }
       );
     }
 
     // FIRST CALL: Generate the correct answer
+    const themeExamples = THEME_EXAMPLES[theme] || '';
     const userPromptFirst = `
-Gere uma pergunta interessante e sua resposta correta para um jogo de trivia familiar.
+Você deve gerar UMA pergunta de trivia ESPECÍFICA e CRIATIVA sobre o tema "${theme}" para um jogo familiar brasileiro chamado OxeJogos.
 
-Tema: ${theme}
-${subTheme ? `Sub-tema: ${subTheme}` : ''}
-N\u00edvel de dificuldade: ${DIFFICULTY_INSTRUCTIONS[difficulty]}
+REGRAS IMPORTANTES:
+1. A pergunta DEVE ser diretamente relacionada ao tema "${theme}" - não pode ser genérica ou sobre outro assunto
+2. A pergunta deve ter uma resposta OBJETIVA e VERIFICÁVEL (um nome, uma data, um número, um lugar)
+3. A pergunta deve ser CRIATIVA e INTERESSANTE - evite perguntas óbvias demais
+4. A resposta deve ser CURTA (máximo 1-2 frases)
+5. Use linguagem clara e acessível para famílias brasileiras
+6. NUNCA repita exemplos - crie algo original
 
-Responda em JSON com o seguinte formato:
+${subTheme ? `Sub-tema específico: ${subTheme}` : ''}
+Nível de dificuldade: ${DIFFICULTY_INSTRUCTIONS[difficulty]}
+
+${themeExamples ? `Exemplos do estilo desejado para o tema "${theme}":\n${themeExamples}\nCrie uma pergunta DIFERENTE desses exemplos, mas no mesmo estilo.` : ''}
+
+Responda APENAS em JSON válido, sem markdown:
 {
   "question": "A pergunta aqui",
   "answer": "A resposta correta aqui"
@@ -62,8 +85,8 @@ Responda em JSON com o seguinte formato:
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
-        temperature: 0.1,
-        system: 'Voc\u00ea \u00e9 um gerador de perguntas para um jogo de trivia familiar chamado OxeJogos. Gere uma pergunta interessante e sua resposta correta.',
+        temperature: 0.9,
+        system: `Você é o mestre de perguntas do OxeJogos, um jogo de trivia familiar brasileiro com alma nordestina. Sua missão é criar perguntas ESPECÍFICAS, CRIATIVAS e DIVERTIDAS que sejam diretamente relacionadas ao tema pedido. Cada pergunta deve ter uma resposta objetiva e verificável. Você é especialista em criar perguntas que provocam curiosidade e debate entre os jogadores. NUNCA faça perguntas genéricas - sempre mergulhe fundo no tema com fatos interessantes, datas marcantes, personagens importantes ou curiosidades surpreendentes. Responda APENAS em JSON válido, sem markdown ou code blocks.`,
         messages: [
           {
             role: 'user',
@@ -75,7 +98,7 @@ Responda em JSON com o seguinte formato:
 
     if (!firstResponse.ok) {
       const errorData = await firstResponse.text();
-      console.error('Erro na chamada \u00e0 API Anthropic (primeira):', errorData);
+      console.error('Erro na chamada à API Anthropic (primeira):', errorData);
       return NextResponse.json(
         { error: 'Erro ao gerar pergunta' },
         { status: 500 }
@@ -102,11 +125,20 @@ Responda em JSON com o seguinte formato:
 
     // SECOND CALL: Generate the creative wrong answer
     const userPromptSecond = `
+Tema da pergunta: "${theme}"
 Pergunta: "${question}"
+Resposta correta (NÃO repita): "${correctAnswer}"
 
-Sua tarefa \u00e9 criar uma resposta que pare\u00e7a plaus\u00edvel mas que N\u00c3O \u00e9 a resposta correta. A resposta deve ser convincente o suficiente para enganar outros jogadores no jogo OxeJogos.
+Sua tarefa é criar UMA resposta alternativa que:
+1. Pareça MUITO plausível e convincente
+2. Esteja relacionada ao tema "${theme}"
+3. Seja DIFERENTE da resposta correta
+4. Tenha o mesmo formato e tamanho da resposta correta
+5. Seja algo que uma pessoa desinformada poderia acreditar ser verdade
 
-Responda em JSON com o seguinte formato:
+A resposta deve enganar jogadores que não sabem a resposta certa.
+
+Responda APENAS em JSON válido, sem markdown:
 {
   "creative_answer": "A resposta falsa convincente aqui"
 }`;
@@ -122,7 +154,7 @@ Responda em JSON com o seguinte formato:
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
         temperature: 0.8,
-        system: 'Voc\u00ea \u00e9 um jogador criativo num jogo de trivia. Sua tarefa \u00e9 criar uma resposta que pare\u00e7a plaus\u00edvel mas que N\u00c3O \u00e9 a resposta correta. A resposta deve ser convincente o suficiente para enganar outros jogadores.',
+        system: `Você é um jogador astuto do OxeJogos. Sua especialidade é criar respostas falsas tão convincentes que enganam os outros jogadores. A resposta falsa deve soar verdadeira, estar no contexto do tema, e ter o mesmo nível de detalhe da resposta correta. Responda APENAS em JSON válido, sem markdown ou code blocks.`,
         messages: [
           {
             role: 'user',
@@ -134,7 +166,7 @@ Responda em JSON com o seguinte formato:
 
     if (!secondResponse.ok) {
       const errorData = await secondResponse.text();
-      console.error('Erro na chamada \u00e0 API Anthropic (segunda):', errorData);
+      console.error('Erro na chamada à API Anthropic (segunda):', errorData);
       return NextResponse.json(
         { error: 'Erro ao gerar resposta criativa' },
         { status: 500 }
