@@ -52,8 +52,8 @@ export interface Profile {
   full_name: string;
   whatsapp?: string;
   avatar_type: 'custom' | 'preset';
-  avatar_url?: string;
   avatar_preset_id?: number;
+  avatar_color?: string;
   total_games_played: number;
   total_wins: number;
   total_points: number;

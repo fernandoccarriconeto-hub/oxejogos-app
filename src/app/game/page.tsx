@@ -31,11 +31,26 @@ export default function GamePage() {
 
   // Fetch players with profiles
   const fetchPlayers = useCallback(async (sessionId: string) => {
-    const { data } = await supabase
+    const { data: playersData } = await supabase
       .from('game_players')
-      .select('*, profile:profiles(full_name)')
+      .select('*')
       .eq('game_session_id', sessionId);
-    if (data) setPlayers(data);
+
+    if (!playersData) return;
+
+    const playerIds = playersData.map((p) => p.player_id);
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', playerIds);
+
+    const profileMap = new Map(profilesData?.map((p) => [p.id, p]) || []);
+    const merged = playersData.map((player) => ({
+      ...player,
+      profile: profileMap.get(player.player_id) || null,
+    }));
+
+    setPlayers(merged);
   }, [supabase]);
 
   // Initialize

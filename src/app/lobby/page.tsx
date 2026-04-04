@@ -36,23 +36,38 @@ export default function LobbyPage() {
 
   // Fetch players with their profile data
   const fetchPlayers = async (gameSessionId: string) => {
-    const { data, error } = await supabase
+    // Fetch game players
+    const { data: playersData, error: playersError } = await supabase
       .from('game_players')
-      .select(`
-        *,
-        profile:player_id(id, full_name, username, avatar_url)
-      `)
+      .select('*')
       .eq('game_session_id', gameSessionId)
       .order('joined_at', { ascending: true });
 
-    if (error) {
-      console.error('Error fetching players:', error);
+    if (playersError) {
+      console.error('Error fetching players:', playersError);
       return;
     }
 
-    if (data) {
-      setPlayers(data as PlayerWithProfile[]);
+    if (!playersData || playersData.length === 0) {
+      setPlayers([]);
+      return;
     }
+
+    // Fetch profiles for all player IDs
+    const playerIds = playersData.map((p) => p.player_id);
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, full_name, avatar_type, avatar_preset_id, avatar_color')
+      .in('id', playerIds);
+
+    // Merge profiles into players
+    const profileMap = new Map(profilesData?.map((p) => [p.id, p]) || []);
+    const merged = playersData.map((player) => ({
+      ...player,
+      profile: profileMap.get(player.player_id) || null,
+    }));
+
+    setPlayers(merged as PlayerWithProfile[]);
   };
 
   // Subscribe to realtime updates
