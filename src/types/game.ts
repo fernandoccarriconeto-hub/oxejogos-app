@@ -31,8 +31,8 @@ export const THEMES = [
 
 export type ThemeId = typeof THEMES[number]['id'];
 
-export const ANSWER_TIME_SECONDS = 90;
-export const VOTE_TIME_SECONDS = 60;
+export const ANSWER_TIME_SECONDS = 30;
+export const VOTE_TIME_SECONDS = 30;
 export const SURPRISE_TIME_SECONDS = 30;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 12;
