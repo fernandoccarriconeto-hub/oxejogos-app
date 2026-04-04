@@ -59,6 +59,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if scores already calculated for this round (prevent duplicates)
+    const { data: existingScores } = await supabase
+      .from('round_scores')
+      .select('id')
+      .eq('round_id', roundId)
+      .limit(1);
+
+    if (existingScores && existingScores.length > 0) {
+      // Scores already exist - return them without recalculating
+      const { data: allScores } = await supabase
+        .from('round_scores')
+        .select('*')
+        .eq('round_id', roundId);
+
+      // Check for winner
+      const gameSession = round.game_sessions;
+      const { data: gamePlayers } = await supabase
+        .from('game_players')
+        .select('*')
+        .eq('game_session_id', gameSession.id);
+
+      const winner = gamePlayers?.find((p: any) => p.board_position >= gameSession.board_size);
+
+      return NextResponse.json(
+        {
+          roundId,
+          scores: allScores?.map((s: any) => ({
+            playerId: s.player_id,
+            pointsCorrectAnswer: s.points_correct_answer,
+            pointsReceivedVotes: s.points_received_votes,
+            pointsAiCreativeBonus: s.points_ai_creative_bonus,
+            pointsAiCreativePenalty: s.points_ai_creative_penalty,
+            totalRoundPoints: s.total_round_points,
+          })) || [],
+          winner: winner?.player_id || null,
+          gameFinished: !!winner,
+          alreadyCalculated: true,
+        },
+        { status: 200 }
+      );
+    }
+
     // Get all answers for this round
     const { data: answers, error: answersError } = await supabase
       .from('player_answers')

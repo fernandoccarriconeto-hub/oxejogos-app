@@ -9,7 +9,7 @@ import type { GameSession, GamePlayer, Round, PlayerAnswer, RoundScore, Shuffled
 import { THEMES, ANSWER_TIME_SECONDS, VOTE_TIME_SECONDS, SURPRISE_HOUSES_INTERVAL } from '@/types/game';
 import { isSurpriseHouse } from '@/lib/utils';
 
-type GameScreenState = 'loading' | 'theme_voting' | 'waiting_question' | 'question' | 'waiting_votes' | 'voting' | 'results' | 'game_over';
+type GameScreenState = 'loading' | 'theme_voting' | 'waiting_question' | 'question' | 'waiting_votes' | 'voting' | 'results' | 'surprise' | 'game_over';
 
 // Board colors for players
 const PLAYER_COLORS = ['#0E7490', '#DC2626', '#16A34A', '#9333EA', '#EA580C', '#2563EB', '#CA8A04', '#DB2777', '#059669', '#7C3AED', '#D97706', '#0891B2'];
@@ -116,6 +116,12 @@ export default function GamePage() {
   const [roundScores, setRoundScores] = useState<RoundScore[]>([]);
   const [isMyTurnToPick, setIsMyTurnToPick] = useState(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  // Surprise state
+  const [surpriseQuestion, setSurpriseQuestion] = useState<string>('');
+  const [surpriseAnswer, setSurpriseAnswer] = useState<string>('');
+  const [surpriseUserAnswer, setSurpriseUserAnswer] = useState<string>('');
+  const [surpriseResult, setSurpriseResult] = useState<'correct' | 'wrong' | null>(null);
+  const [surpriseLoading, setSurpriseLoading] = useState(false);
 
   // Fetch players with profiles
   const fetchPlayers = useCallback(async (sessionId: string) => {
@@ -254,6 +260,20 @@ export default function GamePage() {
     setShuffledAnswers(shuffleArray(answers).map((a, i) => ({ ...a, letter: letters[i] })));
   };
 
+  // Check for surprise house when results screen shows
+  useEffect(() => {
+    if (currentScreen === 'results' && players.length > 0 && user) {
+      checkSurpriseHouse();
+    }
+  }, [currentScreen, players, user]);
+
+  // Recalculate isMyTurnToPick when gameSession or user changes
+  useEffect(() => {
+    if (!gameSession || !user) return;
+    const myTurn = gameSession.theme_picker_order?.[gameSession.current_theme_picker_index] === user.id;
+    setIsMyTurnToPick(myTurn);
+  }, [gameSession?.current_theme_picker_index, gameSession?.theme_picker_order, user?.id]);
+
   // Subscribe to game updates via Realtime
   useEffect(() => {
     if (!gameSession) return;
@@ -318,7 +338,12 @@ export default function GamePage() {
             .select('*')
             .eq('round_id', updatedRound.id);
           if (scores) setRoundScores(scores);
-          setCurrentScreen('results');
+          // Small delay to let board positions update, then check surprise
+          setTimeout(() => {
+            fetchPlayers(gameSession.id).then(() => {
+              setCurrentScreen('results');
+            });
+          }, 1500);
         }
       })
       .subscribe();
@@ -497,6 +522,89 @@ export default function GamePage() {
     } catch (error) {
       console.error('Error calculating scores:', error);
     }
+  };
+
+  // Check if current player landed on surprise house after scores
+  const checkSurpriseHouse = useCallback(async () => {
+    if (!user || !gameSession) return;
+
+    // Find the current player
+    const myPlayer = players.find((p) => p.player_id === user.id);
+    if (!myPlayer) return;
+
+    if (isSurpriseHouse(myPlayer.board_position) && myPlayer.board_position > 0) {
+      // Player landed on surprise house! Fetch surprise question
+      setSurpriseLoading(true);
+      setCurrentScreen('surprise');
+      setSurpriseResult(null);
+      setSurpriseUserAnswer('');
+
+      try {
+        const currentTheme = currentRound?.theme || 'geral';
+        const themeName = THEMES.find((t) => t.id === currentTheme)?.name || currentTheme;
+        const res = await fetch('/api/ai/surprise', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            theme: themeName,
+            difficulty: gameSession.difficulty,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setSurpriseQuestion(data.question);
+          setSurpriseAnswer(data.correctAnswer);
+          setTimeRemaining(30);
+        } else {
+          // Fallback
+          setSurpriseQuestion('Qual a capital do Brasil?');
+          setSurpriseAnswer('Brasilia');
+          setTimeRemaining(30);
+        }
+      } catch (error) {
+        console.error('Error fetching surprise question:', error);
+        setSurpriseQuestion('Qual a capital do Brasil?');
+        setSurpriseAnswer('Brasilia');
+        setTimeRemaining(30);
+      } finally {
+        setSurpriseLoading(false);
+      }
+    }
+  }, [user, gameSession, players, currentRound]);
+
+  // Handle surprise answer submission
+  const handleSurpriseAnswer = async () => {
+    if (!surpriseUserAnswer.trim() || !user || !gameSession) return;
+
+    const isCorrect = surpriseUserAnswer.trim().toLowerCase().includes(surpriseAnswer.toLowerCase()) ||
+      surpriseAnswer.toLowerCase().includes(surpriseUserAnswer.trim().toLowerCase());
+
+    setSurpriseResult(isCorrect ? 'correct' : 'wrong');
+
+    // Update board position based on result
+    const myPlayer = players.find((p) => p.player_id === user.id);
+    if (myPlayer) {
+      const bonus = isCorrect ? 2 : -1;
+      const newPosition = Math.max(0, myPlayer.board_position + bonus);
+
+      await supabase
+        .from('game_players')
+        .update({
+          board_position: newPosition,
+          total_score: myPlayer.total_score + bonus,
+        })
+        .eq('id', myPlayer.id);
+    }
+  };
+
+  // Handle closing surprise and going back to results
+  const handleCloseSurprise = () => {
+    setSurpriseQuestion('');
+    setSurpriseAnswer('');
+    setSurpriseUserAnswer('');
+    setSurpriseResult(null);
+    setCurrentScreen('results');
   };
 
   // Handle next round
@@ -728,6 +836,82 @@ export default function GamePage() {
                 >
                   Calcular Pontuação
                 </button>
+              )}
+            </div>
+          </div>
+        );
+
+      case 'surprise':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-purple-100 via-white to-gray-50 px-4 py-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="text-center mb-6">
+                <div className="text-6xl mb-3 animate-bounce">⭐</div>
+                <h2 className="text-3xl font-fredoka text-purple-700">Casa Surpresa!</h2>
+                <p className="text-gray-600 font-nunito mt-2">
+                  Responda corretamente para ganhar +2 casas. Errou? Volta 1 casa!
+                </p>
+              </div>
+
+              {surpriseLoading ? (
+                <div className="text-center py-12">
+                  <div className="text-5xl mb-4 animate-spin">🎲</div>
+                  <p className="font-fredoka text-xl text-purple-700">Gerando pergunta surpresa...</p>
+                </div>
+              ) : surpriseResult ? (
+                <div className="bg-white rounded-xl shadow-lg p-8 text-center">
+                  <div className="text-6xl mb-4">
+                    {surpriseResult === 'correct' ? '🎉' : '😅'}
+                  </div>
+                  <h3 className="text-2xl font-fredoka mb-4">
+                    {surpriseResult === 'correct' ? (
+                      <span className="text-green-600">Acertou! +2 casas!</span>
+                    ) : (
+                      <span className="text-red-500">Errou! -1 casa</span>
+                    )}
+                  </h3>
+                  <div className="bg-purple-50 rounded-lg p-4 mb-6">
+                    <p className="text-sm text-gray-500 font-nunito mb-1">Resposta correta:</p>
+                    <p className="text-lg font-fredoka text-purple-700">{surpriseAnswer}</p>
+                  </div>
+                  <button
+                    onClick={handleCloseSurprise}
+                    className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg font-fredoka font-bold hover:bg-purple-700 transition-all"
+                  >
+                    Continuar
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl shadow-lg p-8">
+                  <div className="flex justify-between items-start mb-6">
+                    <div className="bg-purple-600 text-white rounded-lg p-4 flex-1">
+                      <p className="text-sm text-purple-200 font-nunito mb-1">Pergunta Surpresa</p>
+                      <p className="text-lg font-fredoka">{surpriseQuestion}</p>
+                    </div>
+                    <div className={`text-3xl font-fredoka ml-4 ${timeRemaining <= 10 ? 'text-red-500 animate-pulse' : 'text-purple-600'}`}>
+                      {formatTime(timeRemaining)}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <label className="block text-sm font-fredoka font-semibold text-purple-700">
+                      Sua Resposta
+                    </label>
+                    <textarea
+                      value={surpriseUserAnswer}
+                      onChange={(e) => setSurpriseUserAnswer(e.target.value)}
+                      placeholder="Digite sua resposta..."
+                      className="w-full px-4 py-3 border-2 border-purple-300 rounded-lg font-nunito focus:border-purple-600 transition-all resize-none h-20"
+                    />
+                    <button
+                      onClick={handleSurpriseAnswer}
+                      disabled={!surpriseUserAnswer.trim()}
+                      className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg font-fredoka font-bold hover:bg-purple-700 transition-all disabled:opacity-50"
+                    >
+                      Responder
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>

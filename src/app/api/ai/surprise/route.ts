@@ -11,9 +11,9 @@ interface AnthropicMessage {
 }
 
 const DIFFICULTY_INSTRUCTIONS: Record<string, string> = {
-  facim: 'N\u00edvel f\u00e1cil - perguntas que a maioria das pessoas consegue responder',
-  marromeno: 'N\u00edvel m\u00e9dio - requer algum conhecimento espec\u00edfico',
-  arrochado: 'N\u00edvel dif\u00edcil - apenas especialistas saberiam',
+  facim: 'Nível FÁCIL - perguntas de cultura geral que a maioria das pessoas consegue responder',
+  marromeno: 'Nível MÉDIO - requer conhecimento específico do tema',
+  arrochado: 'Nível DIFÍCIL - apenas entusiastas ou especialistas saberiam',
 };
 
 export async function POST(request: NextRequest) {
@@ -23,16 +23,16 @@ export async function POST(request: NextRequest) {
 
     if (!theme || !difficulty) {
       return NextResponse.json(
-        { error: 'Tema e dificuldade s\u00e3o obrigat\u00f3rios' },
+        { error: 'Tema e dificuldade são obrigatórios' },
         { status: 400 }
       );
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      console.error('ANTHROPIC_API_KEY n\u00e3o configurada');
+      console.error('ANTHROPIC_API_KEY não configurada');
       return NextResponse.json(
-        { error: 'Configura\u00e7\u00e3o do servidor incompleta' },
+        { error: 'Configuração do servidor incompleta' },
         { status: 500 }
       );
     }
@@ -40,18 +40,21 @@ export async function POST(request: NextRequest) {
     const difficultyInstruction = DIFFICULTY_INSTRUCTIONS[difficulty] || DIFFICULTY_INSTRUCTIONS.marromeno;
 
     const userPrompt = `
-Gere uma pergunta interessante e sua resposta correta para um jogo de trivia familiar em uma "casa surpresa".
+Gere uma pergunta SURPRESA para o jogo OxeJogos! O jogador caiu na casa surpresa do tabuleiro.
 
-Tema: ${theme}
-N\u00edvel de dificuldade: ${difficultyInstruction}
-Tempo dispon\u00edvel: 30 segundos (perguntas mais diretas e objetivas)
+REGRAS:
+1. A pergunta DEVE ser sobre o tema "${theme}" - diretamente relacionada
+2. Deve ter resposta OBJETIVA e CURTA (1-3 palavras idealmente)
+3. Deve ser DIRETA - o jogador tem apenas 30 segundos
+4. A resposta deve ser VERIFICÁVEL (um nome, data, número, lugar)
+5. Seja CRIATIVO - use curiosidades interessantes do tema
 
-A pergunta deve ser respondida rapidamente, ent\u00e3o seja direto e objetivo.
+Nível de dificuldade: ${difficultyInstruction}
 
-Responda em JSON com o seguinte formato:
+Responda APENAS em JSON válido, sem markdown:
 {
-  "question": "A pergunta aqui (bem direta e objetiva)",
-  "answer": "A resposta correta aqui"
+  "question": "A pergunta aqui (direta e objetiva)",
+  "answer": "A resposta correta aqui (curta)"
 }`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -64,8 +67,8 @@ Responda em JSON com o seguinte formato:
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
-        temperature: 0.1,
-        system: 'Voc\u00ea \u00e9 um gerador de perguntas para um jogo de trivia familiar chamado OxeJogos. Para as casas surpresa, gere perguntas diretas e objetivas que possam ser respondidas em 30 segundos.',
+        temperature: 0.9,
+        system: 'Você é o mestre das casas surpresa do OxeJogos! Crie perguntas rápidas, divertidas e ESPECÍFICAS sobre o tema pedido. A resposta deve ser curta e objetiva (1-3 palavras). Responda APENAS em JSON válido, sem markdown.',
         messages: [
           {
             role: 'user',
@@ -77,7 +80,7 @@ Responda em JSON com o seguinte formato:
 
     if (!response.ok) {
       const errorData = await response.text();
-      console.error('Erro na chamada \u00e0 API Anthropic (surprise):', errorData);
+      console.error('Erro na chamada à API Anthropic (surprise):', errorData);
       return NextResponse.json(
         { error: 'Erro ao gerar pergunta surpresa' },
         { status: 500 }
