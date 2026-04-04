@@ -1,11 +1,11 @@
 import type { Metadata } from 'next';
-import { Fredoka_One, Nunito } from 'next/font/google';
+import { Fredoka, Nunito } from 'next/font/google';
 import '../styles/globals.css';
 
-const fredoka = Fredoka_One({
+const fredoka = Fredoka({
   variable: '--font-fredoka',
   subsets: ['latin'],
-  weight: '400',
+  weight: ['400', '700'],
 });
 
 const nunito = Nunito({
