@@ -34,35 +34,66 @@ function GameBoard({ players, boardSize, userId }: { players: GamePlayer[]; boar
               {(player.profile as any)?.full_name || `J${idx + 1}`}
               {player.player_id === userId ? ' (você)' : ''}
             </span>
+            <span className="text-gray-400">casa {Math.min(player.board_position, boardSize)}</span>
           </div>
         ))}
       </div>
 
-      {/* Board houses */}
-      <div className="grid grid-cols-7 gap-2">
-        {houses.map((house) => {
-          const playersOnHouse = players.filter((p) => p.board_position === house);
+      {/* Board grid */}
+      <div className="flex flex-wrap gap-1 justify-center">
+        {houses.map((houseNum) => {
+          const playersHere = players.filter((p) => p.board_position === houseNum);
+          const isSurprise = isSurpriseHouse(houseNum);
+          const isFinish = houseNum === boardSize;
 
           return (
             <div
-              key={house}
-              className="bg-gradient-to-b from-oxe-beige to-oxe-light-orange rounded-lg p-3 aspect-square flex flex-col items-center justify-center border-2 border-oxe-orange shadow-md hover:shadow-lg transition-all"
+              key={houseNum}
+              className={`relative w-10 h-10 md:w-12 md:h-12 rounded-lg flex items-center justify-center text-xs font-fredoka border-2 transition-all ${
+                isFinish
+                  ? 'bg-oxe-gold border-orange-400 text-oxe-navy font-bold'
+                  : isSurprise
+                  ? 'bg-purple-100 border-purple-300 text-purple-700'
+                  : 'bg-gray-50 border-gray-200 text-gray-500'
+              }`}
             >
-              <div className="text-xs font-fredoka text-oxe-navy font-bold mb-1">{house}</div>
-              <div className="flex flex-col gap-1">
-                {playersOnHouse.map((player, idx) => (
-                  <div
-                    key={player.id}
-                    className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
-                    style={{ backgroundColor: PLAYER_COLORS[players.indexOf(player) % PLAYER_COLORS.length] }}
-                    title={(player.profile as any)?.full_name || `J${idx + 1}`}
-                  />
-                ))}
-              </div>
+              {isFinish ? '🏆' : isSurprise ? '⭐' : houseNum}
+
+              {/* Player tokens */}
+              {playersHere.length > 0 && (
+                <div className="absolute -top-1 -right-1 flex -space-x-1">
+                  {playersHere.map((p) => {
+                    const pIdx = players.findIndex((pl) => pl.id === p.id);
+                    return (
+                      <div
+                        key={p.id}
+                        className="w-4 h-4 rounded-full border-2 border-white shadow-sm"
+                        style={{ backgroundColor: PLAYER_COLORS[pIdx % PLAYER_COLORS.length] }}
+                        title={(p.profile as any)?.full_name || 'Jogador'}
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {/* Start position - players at position 0 */}
+      {players.some((p) => p.board_position === 0) && (
+        <div className="mt-2 text-center text-xs text-gray-400 font-nunito">
+          Na largada: {players.filter((p) => p.board_position === 0).map((p, i) => (
+            <span key={p.id} className="inline-flex items-center gap-1 mx-1">
+              <span
+                className="inline-block w-3 h-3 rounded-full"
+                style={{ backgroundColor: PLAYER_COLORS[players.findIndex((pl) => pl.id === p.id) % PLAYER_COLORS.length] }}
+              />
+              {(p.profile as any)?.full_name || 'Jogador'}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -70,508 +101,763 @@ function GameBoard({ players, boardSize, userId }: { players: GamePlayer[]; boar
 export default function GamePage() {
   const router = useRouter();
   const supabase = createClient();
+
+  const [user, setUser] = useState<any>(null);
   const [gameSession, setGameSession] = useState<GameSession | null>(null);
   const [players, setPlayers] = useState<GamePlayer[]>([]);
   const [currentRound, setCurrentRound] = useState<Round | null>(null);
-  const [playerAnswers, setPlayerAnswers] = useState<PlayerAnswer[]>([]);
-  const [roundScores, setRoundScores] = useState<RoundScore[]>([]);
-  const [gameScreenState, setGameScreenState] = useState<GameScreenState>('loading');
-  const [userId, setUserId] = useState<string | null>(null);
-  const [userAnswer, setUserAnswer] = useState('');
-  const [timeLeft, setTimeLeft] = useState(ANSWER_TIME_SECONDS);
+  const [userAnswer, setUserAnswer] = useState<string>('');
+  const [hasSubmittedAnswer, setHasSubmittedAnswer] = useState(false);
   const [shuffledAnswers, setShuffledAnswers] = useState<ShuffledAnswer[]>([]);
+  const [timeRemaining, setTimeRemaining] = useState<number>(0);
+  const [currentScreen, setCurrentScreen] = useState<GameScreenState>('loading');
+  const [selectedTheme, setSelectedTheme] = useState<ThemeId | null>(null);
+  const [selectedVote, setSelectedVote] = useState<string | null>(null);
+  const [roundScores, setRoundScores] = useState<RoundScore[]>([]);
+  const [isMyTurnToPick, setIsMyTurnToPick] = useState(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const [selectedVotes, setSelectedVotes] = useState<{ [key: string]: string | boolean }>({});
-  const [roundResults, setRoundResults] = useState<any>(null);
 
-  // Get user session
+  // Fetch players with profiles
+  const fetchPlayers = useCallback(async (sessionId: string) => {
+    const { data: playersData } = await supabase
+      .from('game_players')
+      .select('*')
+      .eq('game_session_id', sessionId);
+
+    if (!playersData) return;
+
+    const playerIds = playersData.map((p) => p.player_id);
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', playerIds);
+
+    const profileMap = new Map(profilesData?.map((p) => [p.id, p]) || []);
+    const merged = playersData.map((player) => ({
+      ...player,
+      profile: profileMap.get(player.player_id) || null,
+    }));
+
+    setPlayers(merged);
+  }, [supabase]);
+
+  // Initialize
   useEffect(() => {
-    const getSession = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        setUserId(user.id);
-      }
-    };
-    getSession();
-  }, [supabase.auth]);
+    const initialize = async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) { router.push('/auth'); return; }
+      setUser(authUser);
 
-  // Get game session from URL
-  useEffect(() => {
-    const fetchGameSession = async () => {
-      const searchParams = new URLSearchParams(window.location.search);
-      const inviteCode = searchParams.get('invite_code');
-      if (!inviteCode) {
-        router.push('/');
-        return;
-      }
+      const gameSessionId = sessionStorage.getItem('gameSessionId');
+      if (!gameSessionId) { router.push('/lobby'); return; }
 
-      const { data, error } = await supabase
+      // Fetch game session
+      const { data: session } = await supabase
         .from('game_sessions')
         .select('*')
-        .eq('invite_code', inviteCode)
+        .eq('id', gameSessionId)
         .single();
 
-      if (error || !data) {
-        router.push('/');
-        return;
-      }
+      if (!session) { router.push('/lobby'); return; }
 
-      setGameSession(data);
-    };
+      setGameSession(session);
+      await fetchPlayers(session.id);
 
-    if (userId) {
-      fetchGameSession();
-    }
-  }, [userId, supabase, router]);
+      // Check if it's my turn to pick theme
+      const myTurn = session.theme_picker_order?.[session.current_theme_picker_index] === authUser.id;
+      setIsMyTurnToPick(myTurn);
 
-  // Subscribe to game session changes
-  useEffect(() => {
-    if (!gameSession) return;
+      // Determine initial screen based on game status
+      if (session.status === 'theme_selection') {
+        // Check if there's already an active round
+        const { data: activeRound } = await supabase
+          .from('rounds')
+          .select('*')
+          .eq('game_session_id', session.id)
+          .eq('round_number', session.current_round)
+          .single();
 
-    const subscription = supabase
-      .from('game_sessions')
-      .on('*', (payload) => {
-        if (payload.new) {
-          setGameSession(payload.new);
+        if (activeRound) {
+          setCurrentRound(activeRound);
+          if (activeRound.status === 'answering' && activeRound.question_text !== 'Gerando pergunta...') {
+            setCurrentScreen('question');
+            const deadline = new Date(activeRound.answer_deadline || '').getTime();
+            const remaining = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+            setTimeRemaining(remaining);
+          } else if (activeRound.status === 'voting') {
+            await loadShuffledAnswers(activeRound);
+            setCurrentScreen('voting');
+            const deadline = new Date(activeRound.vote_deadline || '').getTime();
+            const remaining = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+            setTimeRemaining(remaining);
+          } else if (activeRound.status === 'results') {
+            setCurrentScreen('results');
+          } else {
+            setCurrentScreen('theme_voting');
+          }
+        } else {
+          setCurrentScreen('theme_voting');
         }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeAllChannels();
-    };
-  }, [gameSession, supabase]);
-
-  // Subscribe to players changes
-  useEffect(() => {
-    if (!gameSession) return;
-
-    const subscription = supabase
-      .from('game_players')
-      .on('*', (payload) => {
-        setPlayers((prev) => {
-          if (payload.eventType === 'INSERT') {
-            return [...prev, payload.new];
-          }
-          if (payload.eventType === 'UPDATE') {
-            return prev.map((p) => (p.id === payload.new.id ? payload.new : p));
-          }
-          if (payload.eventType === 'DELETE') {
-            return prev.filter((p) => p.id !== payload.old.id);
-          }
-          return prev;
-        });
-      })
-      .eq('game_session_id', gameSession.id)
-      .subscribe();
-
-    return () => {
-      supabase.removeAllChannels();
-    };
-  }, [gameSession, supabase]);
-
-  // Get game session players
-  useEffect(() => {
-    const fetchPlayers = async () => {
-      if (!gameSession) return;
-
-      const { data, error } = await supabase.from('game_players').select('*').eq('game_session_id', gameSession.id);
-
-      if (!error && data) {
-        // Get profile info for each player
-        const playersWithProfiles = await Promise.all(
-          data.map(async (player) => {
-            const { data: profile } = await supabase.from('profiles').select('*').eq('id', player.player_id).single();
-            return { ...player, profile };
-          })
-        );
-        setPlayers(playersWithProfiles);
+      } else if (session.status === 'finished') {
+        setCurrentScreen('game_over');
       }
     };
 
-    if (gameSession) {
-      fetchPlayers();
-    }
-  }, [gameSession, supabase]);
+    initialize();
+  }, [supabase, router, fetchPlayers]);
 
-  // Manage game flow
-  useEffect(() => {
-    if (!gameSession) return;
-
-    if (gameSession.status === 'waiting') {
-      setGameScreenState('theme_voting');
-    } else if (gameSession.status === 'in_progress') {
-      fetchCurrentRound();
-    } else if (gameSession.status === 'finished') {
-      setGameScreenState('game_over');
-    }
-  }, [gameSession]);
-
-  // Subscribe to current round changes
-  useEffect(() => {
-    if (!gameSession) return;
-
-    const subscription = supabase
-      .from('rounds')
-      .on('*', (payload) => {
-        if (payload.new) {
-          setCurrentRound(payload.new);
-        }
-      })
-      .eq('game_session_id', gameSession.id)
-      .order('round_number', { ascending: false })
-      .limit(1)
-      .subscribe();
-
-    return () => {
-      supabase.removeAllChannels();
-    };
-  }, [gameSession, supabase]);
-
-  // Fetch current round
-  const fetchCurrentRound = useCallback(async () => {
-    if (!gameSession) return;
-
-    const { data, error } = await supabase
-      .from('rounds')
+  // Load shuffled answers for voting
+  const loadShuffledAnswers = async (round: Round) => {
+    const { data: playerAnswers } = await supabase
+      .from('player_answers')
       .select('*')
-      .eq('game_session_id', gameSession.id)
-      .order('round_number', { ascending: false })
-      .limit(1)
-      .single();
+      .eq('round_id', round.id);
 
-    if (!error && data) {
-      setCurrentRound(data);
-      handleRoundStatus(data.status);
-    }
-  }, [gameSession, supabase]);
+    const answers: ShuffledAnswer[] = [];
+    const letters = 'ABCDEFGHIJKLMNOP';
+    let letterIdx = 0;
 
-  // Handle round status changes
-  const handleRoundStatus = useCallback((status: RoundStatus) => {
-    switch (status) {
-      case 'answering':
-        setGameScreenState('question');
-        setTimeLeft(ANSWER_TIME_SECONDS);
-        break;
-      case 'voting':
-        setGameScreenState('voting');
-        setTimeLeft(VOTE_TIME_SECONDS);
-        break;
-      case 'results':
-        setGameScreenState('results');
-        break;
-      default:
-        setGameScreenState('loading');
+    // Add player answers
+    if (playerAnswers) {
+      playerAnswers.forEach((pa) => {
+        // Don't show own answer for voting
+        answers.push({
+          id: pa.id,
+          letter: letters[letterIdx++],
+          text: pa.answer_text,
+          type: 'player',
+          owner_id: pa.player_id,
+        });
+      });
     }
-  }, []);
+
+    // Add AI correct answer
+    if (round.ai_correct_answer) {
+      answers.push({
+        id: `ai_correct_${round.id}`,
+        letter: letters[letterIdx++],
+        text: round.ai_correct_answer,
+        type: 'ai_correct',
+      });
+    }
+
+    // Add AI creative answer
+    if (round.ai_creative_answer) {
+      answers.push({
+        id: `ai_creative_${round.id}`,
+        letter: letters[letterIdx++],
+        text: round.ai_creative_answer,
+        type: 'ai_creative',
+      });
+    }
+
+    setShuffledAnswers(shuffleArray(answers).map((a, i) => ({ ...a, letter: letters[i] })));
+  };
+
+  // Subscribe to game updates via Realtime
+  useEffect(() => {
+    if (!gameSession) return;
+
+    const channel = supabase
+      .channel(`game_realtime_${gameSession.id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'game_sessions',
+        filter: `id=eq.${gameSession.id}`,
+      }, (payload) => {
+        const updated = payload.new as GameSession;
+        setGameSession(updated);
+        if (updated.status === 'finished') {
+          fetchPlayers(gameSession.id);
+          setCurrentScreen('game_over');
+        }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'game_players',
+        filter: `game_session_id=eq.${gameSession.id}`,
+      }, () => {
+        fetchPlayers(gameSession.id);
+      })
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'rounds',
+        filter: `game_session_id=eq.${gameSession.id}`,
+      }, (payload) => {
+        const newRound = payload.new as Round;
+        setCurrentRound(newRound);
+        if (newRound.question_text && newRound.question_text !== 'Gerando pergunta...') {
+          setCurrentScreen('question');
+          setTimeRemaining(ANSWER_TIME_SECONDS);
+          setHasSubmittedAnswer(false);
+          setUserAnswer('');
+        } else {
+          setCurrentScreen('waiting_question');
+        }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'rounds',
+        filter: `game_session_id=eq.${gameSession.id}`,
+      }, async (payload) => {
+        const updatedRound = payload.new as Round;
+        setCurrentRound(updatedRound);
+
+        if (updatedRound.status === 'answering' && updatedRound.question_text !== 'Gerando pergunta...') {
+          setCurrentScreen('question');
+          const deadline = new Date(updatedRound.answer_deadline || '').getTime();
+          const remaining = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+          setTimeRemaining(remaining > 0 ? remaining : ANSWER_TIME_SECONDS);
+          setHasSubmittedAnswer(false);
+          setUserAnswer('');
+        } else if (updatedRound.status === 'voting') {
+          await loadShuffledAnswers(updatedRound);
+          setCurrentScreen('voting');
+          setTimeRemaining(VOTE_TIME_SECONDS);
+          setSelectedVote(null);
+        } else if (updatedRound.status === 'results') {
+          // Fetch round scores
+          const { data: scores } = await supabase
+            .from('round_scores')
+            .select('*')
+            .eq('round_id', updatedRound.id);
+          if (scores) setRoundScores(scores);
+          setCurrentScreen('results');
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [gameSession?.id, supabase]);
 
   // Timer effect
   useEffect(() => {
-    if (gameScreenState !== 'question' && gameScreenState !== 'voting') return;
-
+    if (timeRemaining <= 0) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      return;
+    }
     timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
+      setTimeRemaining((prev) => {
         if (prev <= 1) {
-          clearInterval(timerRef.current!);
+          if (timerRef.current) clearInterval(timerRef.current);
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [timeRemaining]);
 
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [gameScreenState]);
+  // Handle theme selection and generate question
+  const handleSelectTheme = async () => {
+    if (!selectedTheme || !gameSession || !user) return;
 
-  // Fetch player answers
-  useEffect(() => {
-    if (!currentRound) return;
+    setCurrentScreen('waiting_question');
 
-    const fetchAnswers = async () => {
-      const { data, error } = await supabase.from('player_answers').select('*').eq('round_id', currentRound.id);
+    // Create the round
+    const { data: roundData, error: roundError } = await supabase
+      .from('rounds')
+      .insert({
+        game_session_id: gameSession.id,
+        round_number: gameSession.current_round,
+        theme: selectedTheme,
+        difficulty: gameSession.difficulty,
+        question_text: 'Gerando pergunta...',
+        ai_correct_answer: '',
+        ai_creative_answer: '',
+        status: 'answering',
+        answer_deadline: new Date(Date.now() + (ANSWER_TIME_SECONDS + 10) * 1000).toISOString(),
+      })
+      .select()
+      .single();
 
-      if (!error && data) {
-        setPlayerAnswers(data);
-        // Shuffle answers for voting
-        const shuffled = shuffleAnswers(data, currentRound);
-        setShuffledAnswers(shuffled);
-      }
-    };
-
-    if (gameScreenState === 'voting') {
-      fetchAnswers();
-    }
-  }, [gameScreenState, currentRound, supabase]);
-
-  // Helper to shuffle answers
-  const shuffleAnswers = (answers: PlayerAnswer[], round: Round): ShuffledAnswer[] => {
-    const result: ShuffledAnswer[] = [
-      {
-        id: 'correct',
-        letter: 'A',
-        text: round.ai_correct_answer,
-        type: 'ai_correct',
-      },
-      {
-        id: 'creative',
-        letter: 'B',
-        text: round.ai_creative_answer,
-        type: 'ai_creative',
-      },
-      ...answers.map((answer, idx) => ({
-        id: answer.id,
-        letter: String.fromCharCode(67 + idx), // C, D, E, etc
-        text: answer.answer_text,
-        type: 'player' as const,
-        owner_id: answer.player_id,
-      })),
-    ];
-
-    return shuffleArray(result);
-  };
-
-  const handleThemeSelection = async (themeId: ThemeId) => {
-    if (!gameSession || !userId) return;
-
-    // Create a new round
-    const { data: newRound, error } = await supabase.from('rounds').insert({
-      game_session_id: gameSession.id,
-      round_number: gameSession.current_round + 1,
-      theme: themeId,
-      difficulty: gameSession.difficulty,
-      question_text: 'Generating question...',
-      ai_correct_answer: 'Loading...',
-      ai_creative_answer: 'Loading...',
-      status: 'answering',
-      answer_deadline: new Date(Date.now() + ANSWER_TIME_SECONDS * 1000).toISOString(),
-    });
-
-    if (error) {
-      console.error('Error creating round:', error);
+    if (roundError || !roundData) {
+      console.error('Error creating round:', roundError);
+      setCurrentScreen('theme_voting');
       return;
     }
 
-    setCurrentRound(newRound[0]);
+    setCurrentRound(roundData);
+
+    // Call AI to generate question
+    try {
+      const themeName = THEMES.find((t) => t.id === selectedTheme)?.name || selectedTheme;
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          theme: themeName,
+          difficulty: gameSession.difficulty,
+        }),
+      });
+
+      if (!res.ok) throw new Error('AI generation failed');
+
+      const aiData = await res.json();
+
+      // Update the round with the actual question and answers
+      await supabase
+        .from('rounds')
+        .update({
+          question_text: aiData.question,
+          ai_correct_answer: aiData.correctAnswer,
+          ai_creative_answer: aiData.creativeAnswer,
+          answer_deadline: new Date(Date.now() + ANSWER_TIME_SECONDS * 1000).toISOString(),
+        })
+        .eq('id', roundData.id);
+
+    } catch (error) {
+      console.error('Error generating question:', error);
+      // Fallback question
+      await supabase
+        .from('rounds')
+        .update({
+          question_text: 'Qual é a capital do Brasil?',
+          ai_correct_answer: 'Brasília',
+          ai_creative_answer: 'São Paulo, por ser a maior cidade',
+          answer_deadline: new Date(Date.now() + ANSWER_TIME_SECONDS * 1000).toISOString(),
+        })
+        .eq('id', roundData.id);
+    }
   };
 
-  const handleAnswerSubmit = async () => {
-    if (!currentRound || !userId || !userAnswer.trim()) return;
+  // Handle answer submission
+  const handleSubmitAnswer = async () => {
+    if (!userAnswer.trim() || !currentRound || !user || hasSubmittedAnswer) return;
 
     const { error } = await supabase.from('player_answers').insert({
       round_id: currentRound.id,
-      player_id: userId,
-      answer_text: userAnswer,
-      response_time_seconds: ANSWER_TIME_SECONDS - timeLeft,
+      player_id: user.id,
+      answer_text: userAnswer.trim(),
+      response_time_seconds: ANSWER_TIME_SECONDS - timeRemaining,
     });
 
-    if (error) {
-      console.error('Error submitting answer:', error);
-      return;
+    if (!error) {
+      setHasSubmittedAnswer(true);
+      setUserAnswer('');
     }
-
-    setUserAnswer('');
   };
 
-  const handleVoteSubmit = async () => {
-    if (!currentRound || !userId) return;
+  // Handle moving to voting phase (captain action)
+  const handleMoveToVoting = async () => {
+    if (!currentRound || !gameSession || gameSession.captain_id !== user?.id) return;
+
+    await supabase
+      .from('rounds')
+      .update({
+        status: 'voting',
+        vote_deadline: new Date(Date.now() + VOTE_TIME_SECONDS * 1000).toISOString(),
+      })
+      .eq('id', currentRound.id);
+  };
+
+  // Handle vote submission
+  const handleSubmitVote = async () => {
+    if (!currentRound || !user || !selectedVote) return;
+
+    const isAiCorrect = selectedVote.startsWith('ai_correct_');
+    const isAiCreative = selectedVote.startsWith('ai_creative_');
 
     const { error } = await supabase.from('votes').insert({
       round_id: currentRound.id,
-      voter_id: userId,
-      voted_answer_id: selectedVotes.answer as string,
-      voted_ai_correct: selectedVotes.correct === true,
-      voted_ai_creative: selectedVotes.creative === true,
+      voter_id: user.id,
+      voted_answer_id: (!isAiCorrect && !isAiCreative) ? selectedVote : null,
+      voted_ai_correct: isAiCorrect,
+      voted_ai_creative: isAiCreative,
     });
 
-    if (error) {
-      console.error('Error submitting vote:', error);
-      return;
+    if (!error) {
+      setCurrentScreen('waiting_votes');
     }
-
-    setSelectedVotes({});
   };
 
-  // Render different screens based on game state
-  if (!gameSession || !userId) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-oxe-orange to-oxe-yellow">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🐪</div>
-          <div className="text-xl font-fredoka text-oxe-navy">Carregando jogo...</div>
-        </div>
-      </div>
-    );
-  }
+  // Handle calculate scores (captain action)
+  const handleCalculateScores = async () => {
+    if (!currentRound || !gameSession || gameSession.captain_id !== user?.id) return;
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-oxe-orange to-oxe-yellow p-4">
-      <div className="max-w-4xl mx-auto">
-        {/* Header with score */}
-        <div className="bg-white rounded-xl shadow-lg p-4 mb-4">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-fredoka text-oxe-navy">OxeJogos</h1>
-            <div className="text-right">
-              <div className="text-sm text-gray-600">Rodada {gameSession.current_round}</div>
-              <div className="text-lg font-bold text-oxe-orange">Pontos: {players.find((p) => p.player_id === userId)?.total_score || 0}</div>
+    try {
+      const res = await fetch('/api/game/calculate-scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roundId: currentRound.id }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+
+        // Update round status to results
+        await supabase
+          .from('rounds')
+          .update({ status: 'results' })
+          .eq('id', currentRound.id);
+
+        if (data.gameFinished) {
+          await supabase
+            .from('game_sessions')
+            .update({ status: 'finished', finished_at: new Date().toISOString() })
+            .eq('id', gameSession.id);
+        }
+      }
+    } catch (error) {
+      console.error('Error calculating scores:', error);
+    }
+  };
+
+  // Handle next round
+  const handleNextRound = async () => {
+    if (!gameSession || gameSession.captain_id !== user?.id) return;
+
+    const nextPickerIndex = (gameSession.current_theme_picker_index + 1) % gameSession.theme_picker_order.length;
+
+    await supabase
+      .from('game_sessions')
+      .update({
+        current_round: gameSession.current_round + 1,
+        current_theme_picker_index: nextPickerIndex,
+      })
+      .eq('id', gameSession.id);
+
+    setCurrentScreen('theme_voting');
+    setSelectedTheme(null);
+    setCurrentRound(null);
+    setShuffledAnswers([]);
+    setRoundScores([]);
+    setHasSubmittedAnswer(false);
+  };
+
+  // Check if user is captain
+  const isCaptain = gameSession?.captain_id === user?.id;
+
+  const renderScreen = () => {
+    switch (currentScreen) {
+      case 'loading':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light to-white flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-5xl mb-4 animate-bounce">🎮</div>
+              <p className="font-fredoka text-xl text-oxe-navy">Preparando o jogo...</p>
             </div>
           </div>
-        </div>
+        );
 
-        {/* Board component */}
-        {gameScreenState !== 'loading' && <GameBoard players={players} boardSize={gameSession.board_size} userId={userId} />}
+      case 'theme_voting':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light via-white to-gray-50 px-4 py-8">
+            <div className="max-w-6xl mx-auto">
+              <h1 className="text-4xl font-fredoka font-bold text-center text-oxe-navy mb-2">
+                Escolha o Tema
+              </h1>
+              <p className="text-center text-gray-600 font-nunito mb-4">
+                Rodada {gameSession?.current_round || 1}
+              </p>
+              {isMyTurnToPick ? (
+                <p className="text-center text-oxe-blue font-fredoka font-bold mb-8">
+                  É a sua vez de escolher!
+                </p>
+              ) : (
+                <p className="text-center text-gray-500 font-nunito mb-8">
+                  Aguardando outro jogador escolher o tema...
+                </p>
+              )}
 
-        {/* Theme voting screen */}
-        {gameScreenState === 'theme_voting' && (
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-fredoka text-oxe-navy text-center mb-6">Escolha um Tema</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {THEMES.map((theme) => (
-                <button
-                  key={theme.id}
-                  onClick={() => handleThemeSelection(theme.id as ThemeId)}
-                  className="bg-gradient-to-b from-oxe-beige to-oxe-light-orange rounded-lg p-4 border-2 border-oxe-orange hover:shadow-lg transition-all"
-                >
-                  <div className="text-3xl mb-2">{theme.emoji}</div>
-                  <div className="font-fredoka text-oxe-navy text-sm font-bold">{theme.name}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+              {isMyTurnToPick && (
+                <>
+                  <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+                    {THEMES.map((theme) => (
+                      <motion.button
+                        key={theme.id}
+                        onClick={() => setSelectedTheme(theme.id as ThemeId)}
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        className={`p-6 rounded-xl transition-all border-2 ${
+                          selectedTheme === theme.id
+                            ? 'bg-oxe-blue text-white border-oxe-blue shadow-lg'
+                            : 'bg-white text-gray-800 border-gray-200 hover:border-oxe-blue'
+                        }`}
+                      >
+                        <div className="text-3xl mb-2">{theme.emoji}</div>
+                        <p className="font-fredoka text-sm">{theme.name}</p>
+                      </motion.button>
+                    ))}
+                  </div>
 
-        {/* Question screen */}
-        {gameScreenState === 'question' && currentRound && (
-          <AnimatePresence>
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex justify-between items-start mb-4">
-                <h2 className="text-2xl font-fredoka text-oxe-navy flex-1">{currentRound.question_text}</h2>
-                <div className="text-2xl font-bold text-oxe-orange ml-4">{formatTime(timeLeft)}</div>
-              </div>
-
-              <div className="mb-4">
-                <textarea
-                  value={userAnswer}
-                  onChange={(e) => setUserAnswer(e.target.value)}
-                  placeholder="Sua resposta aqui..."
-                  className="w-full px-4 py-2 border-2 border-oxe-orange rounded-lg font-nunito focus:outline-none focus:ring-2 focus:ring-oxe-navy"
-                  rows={3}
-                />
-              </div>
-
-              <button
-                onClick={handleAnswerSubmit}
-                disabled={!userAnswer.trim()}
-                className="w-full bg-oxe-orange hover:bg-oxe-dark-orange text-white font-fredoka py-3 rounded-lg disabled:opacity-50 transition-all"
-              >
-                Enviar Resposta
-              </button>
-            </motion.div>
-          </AnimatePresence>
-        )}
-
-        {/* Voting screen */}
-        {gameScreenState === 'voting' && currentRound && (
-          <AnimatePresence>
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex justify-between items-start mb-6">
-                <h2 className="text-2xl font-fredoka text-oxe-navy">Vote na melhor resposta</h2>
-                <div className="text-2xl font-bold text-oxe-orange">{formatTime(timeLeft)}</div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3">
-                {shuffledAnswers.map((answer) => (
                   <button
+                    onClick={handleSelectTheme}
+                    disabled={!selectedTheme}
+                    className="w-full px-6 py-4 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold text-lg hover:bg-opacity-90 transition-all disabled:opacity-50"
+                  >
+                    Começar Rodada
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+
+      case 'waiting_question':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light to-white flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-5xl mb-4 animate-spin">🤖</div>
+              <p className="font-fredoka text-xl text-oxe-navy">A IA está gerando a pergunta...</p>
+              <p className="text-gray-500 font-nunito mt-2">Isso pode levar alguns segundos</p>
+            </div>
+          </div>
+        );
+
+      case 'question':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light via-white to-gray-50 px-4 py-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-2xl font-fredoka text-oxe-navy">
+                  {hasSubmittedAnswer ? 'Resposta enviada!' : 'Responda a pergunta'}
+                </h2>
+                <div className={`text-3xl font-fredoka ${timeRemaining <= 10 ? 'text-red-500 animate-pulse' : 'text-oxe-blue'}`}>
+                  {formatTime(timeRemaining)}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
+                <div className="bg-oxe-blue text-white rounded-lg p-6 mb-6">
+                  <p className="text-sm text-oxe-light font-nunito mb-2">Pergunta</p>
+                  <p className="text-xl font-fredoka">
+                    {currentRound?.question_text || 'Carregando pergunta...'}
+                  </p>
+                </div>
+
+                {!hasSubmittedAnswer ? (
+                  <div className="space-y-4">
+                    <label className="block text-sm font-fredoka font-semibold text-oxe-navy">
+                      Sua Resposta
+                    </label>
+                    <textarea
+                      value={userAnswer}
+                      onChange={(e) => setUserAnswer(e.target.value)}
+                      placeholder="Digite sua resposta aqui..."
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg font-nunito focus:border-oxe-blue focus:bg-oxe-light transition-all resize-none h-24"
+                    />
+                    <button
+                      onClick={handleSubmitAnswer}
+                      disabled={!userAnswer.trim()}
+                      className="w-full px-6 py-3 bg-oxe-blue text-white rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all disabled:opacity-50"
+                    >
+                      Enviar Resposta
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="text-5xl mb-4">✅</div>
+                    <p className="font-fredoka text-xl text-oxe-navy">Resposta enviada!</p>
+                    <p className="text-gray-500 font-nunito mt-2">Aguardando os outros jogadores...</p>
+                    {isCaptain && (
+                      <button
+                        onClick={handleMoveToVoting}
+                        className="mt-6 px-6 py-3 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all"
+                      >
+                        Ir para Votação
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'voting':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light via-white to-gray-50 px-4 py-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-2xl font-fredoka text-oxe-navy">Vote na melhor resposta</h2>
+                <div className={`text-3xl font-fredoka ${timeRemaining <= 10 ? 'text-red-500 animate-pulse' : 'text-oxe-blue'}`}>
+                  {formatTime(timeRemaining)}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-lg p-6 mb-4">
+                <p className="text-sm text-gray-500 font-nunito mb-2">Pergunta</p>
+                <p className="font-fredoka text-oxe-navy">{currentRound?.question_text}</p>
+              </div>
+
+              <div className="space-y-4 mb-8">
+                {shuffledAnswers
+                  .filter((a) => a.owner_id !== user?.id)
+                  .map((answer) => (
+                  <motion.button
                     key={answer.id}
-                    onClick={() => setSelectedVotes({ answer: answer.id })}
-                    className={`p-4 rounded-lg border-2 transition-all text-left ${
-                      selectedVotes.answer === answer.id
-                        ? 'bg-oxe-orange border-oxe-dark-orange text-white'
-                        : 'bg-oxe-beige border-oxe-orange hover:bg-oxe-light-orange'
+                    onClick={() => setSelectedVote(answer.id)}
+                    whileHover={{ scale: 1.02 }}
+                    className={`w-full p-4 rounded-lg border-2 text-left transition-all ${
+                      selectedVote === answer.id
+                        ? 'bg-oxe-blue text-white border-oxe-blue'
+                        : 'bg-white text-gray-800 border-gray-300 hover:border-oxe-blue'
                     }`}
                   >
-                    <div className="font-fredoka font-bold mb-1">
-                      {answer.letter}. {answer.type === 'player' ? `${players.find((p) => p.id === answer.owner_id)?.profile?.full_name || 'Jogador'}'s answer` : answer.type === 'ai_correct' ? 'IA - Resposta Correta' : 'IA - Resposta Criativa'}
+                    <div className="flex items-center gap-4">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-fredoka font-bold ${
+                        selectedVote === answer.id ? 'bg-white text-oxe-blue' : 'bg-gray-200 text-gray-700'
+                      }`}>
+                        {answer.letter}
+                      </div>
+                      <p className="font-nunito flex-1">{answer.text}</p>
                     </div>
-                    <div className="font-nunito">{answer.text}</div>
-                  </button>
+                  </motion.button>
                 ))}
               </div>
 
               <button
-                onClick={handleVoteSubmit}
-                disabled={!selectedVotes.answer}
-                className="w-full bg-oxe-orange hover:bg-oxe-dark-orange text-white font-fredoka py-3 rounded-lg disabled:opacity-50 transition-all mt-4"
+                onClick={handleSubmitVote}
+                disabled={!selectedVote}
+                className="w-full px-6 py-3 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all disabled:opacity-50"
               >
-                Votar
+                Confirmar Voto
               </button>
-            </motion.div>
-          </AnimatePresence>
-        )}
+            </div>
+          </div>
+        );
 
-        {/* Results screen */}
-        {gameScreenState === 'results' && currentRound && (
-          <AnimatePresence>
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-2xl font-fredoka text-oxe-navy text-center mb-6">Resultado da Rodada</h2>
-              <div className="text-center mb-6">
-                <div className="text-3xl font-bold text-oxe-orange mb-2">{currentRound.ai_correct_answer}</div>
-                <div className="text-gray-600 font-nunito">Resposta Correta</div>
-              </div>
+      case 'waiting_votes':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light to-white flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-5xl mb-4">🗳️</div>
+              <p className="font-fredoka text-xl text-oxe-navy">Voto registrado!</p>
+              <p className="text-gray-500 font-nunito mt-2">Aguardando os outros jogadores votarem...</p>
+              {isCaptain && (
+                <button
+                  onClick={handleCalculateScores}
+                  className="mt-6 px-6 py-3 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all"
+                >
+                  Calcular Pontuação
+                </button>
+              )}
+            </div>
+          </div>
+        );
 
-              <div className="space-y-3 mb-6">
-                {roundScores.map((score) => {
-                  const player = players.find((p) => p.id === score.player_id);
-                  return (
-                    <div key={score.id} className="bg-oxe-beige rounded-lg p-4 flex justify-between items-center">
-                      <div className="font-fredoka text-oxe-navy font-bold">{player?.profile?.full_name || 'Jogador'}</div>
-                      <div className="text-lg font-bold text-oxe-orange">+{score.total_round_points} pts</div>
+      case 'results':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-light via-white to-gray-50 px-4 py-8">
+            <div className="max-w-4xl mx-auto">
+              <h2 className="text-3xl font-fredoka text-center text-oxe-navy mb-8">
+                Resultado da Rodada
+              </h2>
+
+              <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
+                <p className="text-lg font-nunito text-center text-gray-700 mb-4">
+                  A resposta correta era:
+                </p>
+                <p className="text-2xl font-fredoka text-center text-oxe-blue mb-8">
+                  {currentRound?.ai_correct_answer}
+                </p>
+
+                {roundScores.length > 0 && (
+                  <>
+                    <h3 className="text-xl font-fredoka text-oxe-navy mb-4">Placar da Rodada</h3>
+                    <div className="space-y-3">
+                      {roundScores
+                        .sort((a, b) => b.total_round_points - a.total_round_points)
+                        .map((score, idx) => {
+                          const player = players.find((p) => p.player_id === score.player_id);
+                          return (
+                            <div key={idx} className="flex items-center justify-between p-4 bg-oxe-light rounded-lg">
+                              <p className="font-fredoka text-oxe-navy">
+                                {(player?.profile as any)?.full_name || 'Jogador'}
+                              </p>
+                              <p className="text-lg font-fredoka text-oxe-blue">
+                                +{score.total_round_points} pts
+                              </p>
+                            </div>
+                          );
+                        })}
                     </div>
-                  );
-                })}
+                  </>
+                )}
               </div>
+
+              {isCaptain && (
+                <button
+                  onClick={handleNextRound}
+                  className="w-full px-6 py-4 bg-oxe-blue text-white rounded-lg font-fredoka font-bold text-lg hover:bg-opacity-90 transition-all"
+                >
+                  Próxima Rodada
+                </button>
+              )}
+              {!isCaptain && (
+                <p className="text-center text-gray-500 font-nunito">
+                  Aguardando o capitão iniciar a próxima rodada...
+                </p>
+              )}
+            </div>
+          </div>
+        );
+
+      case 'game_over':
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-oxe-navy to-oxe-blue flex items-center justify-center px-4 py-8">
+            <div className="max-w-2xl w-full text-center text-white">
+              <div className="text-7xl mb-6">🏆</div>
+              <h1 className="text-5xl font-fredoka font-bold mb-4">Jogo Finalizado!</h1>
+
+              {players.length > 0 && (
+                <>
+                  <div className="bg-white bg-opacity-20 rounded-xl p-8 mb-8">
+                    <p className="text-xl font-nunito mb-4">Campeão da Partida</p>
+                    <p className="text-3xl font-fredoka">
+                      {(() => {
+                        const winner = players.reduce((w, p) => p.total_score > w.total_score ? p : w);
+                        return (winner?.profile as any)?.full_name || 'Jogador';
+                      })()}
+                    </p>
+                  </div>
+
+                  <div className="space-y-4 mb-8">
+                    {players
+                      .sort((a, b) => b.total_score - a.total_score)
+                      .map((player, idx) => (
+                        <div key={player.id} className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
+                          <div className="flex items-center gap-4">
+                            <span className="text-2xl font-fredoka w-8">{idx + 1}º</span>
+                            <p className="font-fredoka">{(player.profile as any)?.full_name || 'Jogador'}</p>
+                          </div>
+                          <p className="text-xl font-fredoka">{player.total_score} pts</p>
+                        </div>
+                      ))}
+                  </div>
+                </>
+              )}
 
               <button
-                onClick={fetchCurrentRound}
-                className="w-full bg-oxe-orange hover:bg-oxe-dark-orange text-white font-fredoka py-3 rounded-lg transition-all"
+                onClick={() => router.push('/lobby')}
+                className="w-full px-6 py-4 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold text-lg hover:bg-opacity-90 transition-all"
               >
-                Próxima Rodada
+                Voltar ao Lobby
               </button>
-            </motion.div>
-          </AnimatePresence>
-        )}
+            </div>
+          </div>
+        );
 
-        {/* Game over screen */}
-        {gameScreenState === 'game_over' && (
-          <AnimatePresence>
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-3xl font-fredoka text-oxe-navy text-center mb-6">Fim de Jogo!</h2>
-              <div className="space-y-3 mb-6">
-                {players
-                  .sort((a, b) => b.total_score - a.total_score)
-                  .map((player, idx) => (
-                    <div key={player.id} className="bg-oxe-beige rounded-lg p-4 flex justify-between items-center">
-                      <div className="flex items-center gap-3">
-                        <div className="text-2xl font-bold text-oxe-orange">#{idx + 1}</div>
-                        <div className="font-fredoka text-oxe-navy font-bold">{player.profile?.full_name || 'Jogador'}</div>
-                      </div>
-                      <div className="text-lg font-bold text-oxe-orange">{player.total_score} pts</div>
-                    </div>
-                  ))}
-              </div>
+      default:
+        return null;
+    }
+  };
 
-              <button
-                onClick={() => router.push('/')}
-                className="w-full bg-oxe-orange hover:bg-oxe-dark-orange text-white font-fredoka py-3 rounded-lg transition-all"
-              >
-                Voltar ao Início
-              </button>
-            </motion.div>
-          </AnimatePresence>
-        )}
-      </div>
+  const showBoard = currentScreen !== 'loading' && currentScreen !== 'game_over' && gameSession;
+
+  return (
+    <div>
+      {showBoard && (
+        <div className="max-w-6xl mx-auto px-4 pt-4">
+          <GameBoard
+            players={players}
+            boardSize={gameSession.board_size}
+            userId={user?.id || null}
+          />
+        </div>
+      )}
+      <AnimatePresence mode="wait">
+        <motion.div key={currentScreen} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          {renderScreen()}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }
