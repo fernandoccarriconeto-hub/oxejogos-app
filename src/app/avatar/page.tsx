@@ -77,7 +77,7 @@ export default function AvatarPage() {
     }
 
     if (playerName.length > 15) {
-      alert('Nome n\u00e3o pode ter mais de 15 caracteres');
+      alert('Nome não pode ter mais de 15 caracteres');
       return;
     }
 
@@ -105,7 +105,7 @@ export default function AvatarPage() {
     return (
       <div className="min-h-screen bg-gradient-to-b from-oxe-light to-white flex items-center justify-center">
         <div className="text-center">
-          <div className="text-5xl mb-4">⌛</div>
+          <div className="text-5xl mb-4">⏳</div>
           <p className="font-fredoka text-xl text-oxe-navy">Carregando...</p>
         </div>
       </div>
@@ -127,7 +127,7 @@ export default function AvatarPage() {
             Escolha seu Avatar
           </h1>
           <p className="text-gray-600 font-nunito text-lg">
-            Customize sua apar\u00eancia e escolha um nome arretado
+            Customize sua aparência e escolha um nome arretado
           </p>
         </motion.div>
 
@@ -139,7 +139,7 @@ export default function AvatarPage() {
             className="bg-white rounded-xl shadow-lg p-8 h-fit sticky top-8"
           >
             <h2 className="text-xl font-fredoka text-oxe-navy mb-6 text-center">
-              Pr\u00e9-visualiza\u00e7\u00e3o
+              Pré-visualização
             </h2>
 
             {/* Avatar Preview */}
@@ -183,7 +183,7 @@ export default function AvatarPage() {
             {/* Player Name Input */}
             <div>
               <label className="block text-sm font-fredoka font-bold text-oxe-navy mb-3">
-                Nome do Jogador (m\u00e1x. 15 caracteres)
+                Nome do Jogador (máx. 15 caracteres)
               </label>
               <input
                 type="text"
@@ -252,7 +252,7 @@ export default function AvatarPage() {
                 Prefere usar uma foto sua?
               </p>
               <button className="px-6 py-2 bg-white text-oxe-blue rounded-lg font-fredoka font-bold hover:bg-gray-100 transition-all border-2 border-oxe-blue">
-                \ud83d\udcf7 Upload Foto
+                📷 Upload Foto
               </button>
             </div>
 
@@ -264,7 +264,7 @@ export default function AvatarPage() {
               whileTap={{ scale: 0.98 }}
               className="w-full px-6 py-4 bg-gradient-to-r from-oxe-gold to-orange-500 text-oxe-navy rounded-lg font-fredoka font-bold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {saving ? 'Salvando...' : '\ud83d\ude80 T\u00f4 Pronto! Bora Jogar!'}
+              {saving ? 'Salvando...' : '🚀 Tô Pronto! Bora Jogar!'}
             </motion.button>
           </motion.div>
         </div>
