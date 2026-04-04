@@ -23,13 +23,14 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
 
+    // Check authentication
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     if (!user) {
       return NextResponse.json(
-        { error: 'Usu\u00e1rio n\u00e3o autenticado' },
+        { error: 'Usuário não autenticado' },
         { status: 401 }
       );
     }
@@ -39,11 +40,12 @@ export async function POST(request: NextRequest) {
 
     if (!roundId) {
       return NextResponse.json(
-        { error: 'ID da rodada \u00e9 obrigat\u00f3rio' },
+        { error: 'ID da rodada é obrigatório' },
         { status: 400 }
       );
     }
 
+    // Get round and game session info
     const { data: round, error: roundError } = await supabase
       .from('rounds')
       .select('*, game_sessions(*)')
@@ -52,40 +54,46 @@ export async function POST(request: NextRequest) {
 
     if (roundError || !round) {
       return NextResponse.json(
-        { error: 'Rodada n\u00e3o encontrada' },
+        { error: 'Rodada não encontrada' },
         { status: 404 }
       );
     }
 
+    // Get all answers for this round
     const { data: answers, error: answersError } = await supabase
       .from('player_answers')
       .select('*')
       .eq('round_id', roundId);
 
     if (answersError) {
+      console.error('Erro ao obter respostas:', answersError);
       return NextResponse.json(
-        { error: 'Erro ao calcular pontua\u00e7\u00f5es' },
+        { error: 'Erro ao calcular pontuações' },
         { status: 500 }
       );
     }
 
+    // Get all votes for this round
     const { data: votes, error: votesError } = await supabase
       .from('votes')
       .select('*')
       .eq('round_id', roundId);
 
     if (votesError) {
+      console.error('Erro ao obter votos:', votesError);
       return NextResponse.json(
-        { error: 'Erro ao calcular pontua\u00e7\u00f5es' },
+        { error: 'Erro ao calcular pontuações' },
         { status: 500 }
       );
     }
 
+    // Calculate scores for each player
     const playerScores: Map<string, PlayerScore> = new Map();
     const gameSession = round.game_sessions;
 
+    // Initialize all players with 0 scores
     if (answers) {
-      answers.forEach((answer: any) => {
+      answers.forEach((answer) => {
         if (!playerScores.has(answer.player_id)) {
           playerScores.set(answer.player_id, {
             playerId: answer.player_id,
@@ -99,7 +107,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (votes) {
-      votes.forEach((vote: any) => {
+      votes.forEach((vote) => {
         if (!playerScores.has(vote.voter_id)) {
           playerScores.set(vote.voter_id, {
             playerId: vote.voter_id,
@@ -112,8 +120,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Award points for voting for correct AI answer
     if (votes) {
-      votes.forEach((vote: any) => {
+      votes.forEach((vote) => {
         if (vote.voted_ai_correct) {
           const score = playerScores.get(vote.voter_id);
           if (score) {
@@ -124,17 +133,18 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Award points for votes received
     if (votes && answers) {
       const voteCounts = new Map<string, number>();
 
-      votes.forEach((vote: any) => {
+      votes.forEach((vote) => {
         if (vote.voted_answer_id) {
           const currentCount = voteCounts.get(vote.voted_answer_id) || 0;
           voteCounts.set(vote.voted_answer_id, currentCount + 1);
         }
       });
 
-      answers.forEach((answer: any) => {
+      answers.forEach((answer) => {
         const voteCount = voteCounts.get(answer.id) || 0;
         if (voteCount > 0) {
           const score = playerScores.get(answer.player_id);
@@ -146,26 +156,22 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Award points for voting for AI correct answer (player identified the correct one)
+    // and for voting for AI creative answer (player was tricked by creative answer)
     if (votes) {
-      votes.forEach((vote: any) => {
-        if (vote.flagged_as_ai_creative_id) {
-          if (vote.flagged_as_ai_creative_id === `ai_creative_${roundId}`) {
-            const score = playerScores.get(vote.voter_id);
-            if (score) {
-              score.pointsAiCreativeBonus += POINTS_AI_CREATIVE_BONUS;
-              playerScores.set(vote.voter_id, score);
-            }
-          } else {
-            const score = playerScores.get(vote.voter_id);
-            if (score) {
-              score.pointsAiCreativePenalty += POINTS_AI_CREATIVE_PENALTY;
-              playerScores.set(vote.voter_id, score);
-            }
+      votes.forEach((vote) => {
+        // If player voted for the AI creative answer (was fooled), penalize
+        if (vote.voted_ai_creative) {
+          const score = playerScores.get(vote.voter_id);
+          if (score) {
+            score.pointsAiCreativePenalty += POINTS_AI_CREATIVE_PENALTY;
+            playerScores.set(vote.voter_id, score);
           }
         }
       });
     }
 
+    // Insert round scores and collect for database
     const roundScoresToInsert: any[] = [];
     const gamePlayersToUpdate: any[] = [];
 
@@ -193,19 +199,22 @@ export async function POST(request: NextRequest) {
       });
     });
 
+    // Insert round scores
     if (roundScoresToInsert.length > 0) {
       const { error: scoreError } = await supabase
         .from('round_scores')
         .insert(roundScoresToInsert);
 
       if (scoreError) {
+        console.error('Erro ao inserir pontuações da rodada:', scoreError);
         return NextResponse.json(
-          { error: 'Erro ao salvar pontua\u00e7\u00f5es' },
+          { error: 'Erro ao salvar pontuações' },
           { status: 500 }
         );
       }
     }
 
+    // Update game players board position
     for (const playerUpdate of gamePlayersToUpdate) {
       const { data: gamePlayer, error: fetchError } = await supabase
         .from('game_players')
@@ -214,18 +223,26 @@ export async function POST(request: NextRequest) {
         .eq('player_id', playerUpdate.playerId)
         .single();
 
-      if (fetchError) continue;
+      if (fetchError) {
+        console.error('Erro ao buscar jogador:', fetchError);
+        continue;
+      }
 
       const newPosition = gamePlayer.board_position + playerUpdate.housesMove;
-      await supabase
+      const { error: updateError } = await supabase
         .from('game_players')
         .update({
           board_position: newPosition,
           total_score: gamePlayer.total_score + playerUpdate.housesMove,
         })
         .eq('id', gamePlayer.id);
+
+      if (updateError) {
+        console.error('Erro ao atualizar posição do jogador:', updateError);
+      }
     }
 
+    // Check for winner
     let winner = null;
     for (const playerUpdate of gamePlayersToUpdate) {
       const { data: gamePlayer } = await supabase
@@ -241,6 +258,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // If there's a winner, update game status
     if (winner) {
       await supabase
         .from('game_sessions')
@@ -272,7 +290,7 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
-    console.error('Erro ao calcular pontua\u00e7\u00f5es:', error);
+    console.error('Erro ao calcular pontuações:', error);
     return NextResponse.json(
       { error: 'Erro interno do servidor' },
       { status: 500 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -13,14 +13,19 @@ import { GAME_MODE_CONFIG, DIFFICULTY_CONFIG } from '@/types/game';
 type GameMode = 'rapidinho' | 'classico' | 'maratona';
 type Difficulty = 'facim' | 'marromeno' | 'arrochado';
 
+interface PlayerWithProfile extends GamePlayer {
+  profile?: Profile;
+}
+
 export default function LobbyPage() {
   const router = useRouter();
   const supabase = createClient();
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [gameSession, setGameSession] = useState<GameSession | null>(null);
-  const [players, setPlayers] = useState<GamePlayer[]>([]);
+  const [players, setPlayers] = useState<PlayerWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [selectedMode, setSelectedMode] = useState<GameMode>('classico');
@@ -28,6 +33,85 @@ export default function LobbyPage() {
   const [inviteCode, setInviteCode] = useState<string>('');
   const [joinCode, setJoinCode] = useState<string>('');
   const [gameStarting, setGameStarting] = useState(false);
+
+  // Fetch players with their profile data
+  const fetchPlayers = async (gameSessionId: string) => {
+    const { data, error } = await supabase
+      .from('game_players')
+      .select(`
+        *,
+        profile:player_id(id, full_name, username, avatar_url)
+      `)
+      .eq('game_session_id', gameSessionId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching players:', error);
+      return;
+    }
+
+    if (data) {
+      setPlayers(data as PlayerWithProfile[]);
+    }
+  };
+
+  // Subscribe to realtime updates
+  const subscribeToGameUpdates = (gameSessionId: string) => {
+    // Unsubscribe from previous subscription if exists
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+    }
+
+    // Subscribe to game_players changes
+    const playerSubscription = supabase
+      .channel(`players:${gameSessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_players',
+          filter: `game_session_id=eq.${gameSessionId}`,
+        },
+        (payload: any) => {
+          // Refetch players whenever there's a change
+          fetchPlayers(gameSessionId);
+        }
+      )
+      .subscribe();
+
+    // Subscribe to game_sessions status changes
+    const gameSubscription = supabase
+      .channel(`session:${gameSessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'game_sessions',
+          filter: `id=eq.${gameSessionId}`,
+        },
+        (payload: any) => {
+          const updatedSession = payload.new as GameSession;
+
+          // If status changed to theme_selection, all players go to /game
+          if (updatedSession.status === 'theme_selection') {
+            sessionStorage.setItem('gameSessionId', gameSessionId);
+            router.push('/game');
+          } else {
+            // Update the game session state
+            setGameSession(updatedSession);
+          }
+        }
+      )
+      .subscribe();
+
+    // Store unsubscribe function
+    unsubscribeRef.current = () => {
+      supabase.removeChannel(playerSubscription);
+      supabase.removeChannel(gameSubscription);
+    };
+  };
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -56,6 +140,13 @@ export default function LobbyPage() {
     };
 
     checkAuth();
+
+    return () => {
+      // Cleanup subscription on unmount
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+    };
   }, [supabase, router]);
 
   const handleCreateGame = async () => {
@@ -88,7 +179,7 @@ export default function LobbyPage() {
     }
 
     if (sessionData) {
-      await supabase.from('game_players').insert({
+      const { error: playerError } = await supabase.from('game_players').insert({
         game_session_id: sessionData.id,
         player_id: user.id,
         board_position: 0,
@@ -96,9 +187,17 @@ export default function LobbyPage() {
         is_connected: true,
       });
 
-      setGameSession(sessionData);
-      setInviteCode(code);
-      setShowCreatePanel(false);
+      if (!playerError) {
+        setGameSession(sessionData);
+        setInviteCode(code);
+        setShowCreatePanel(false);
+
+        // Fetch players immediately after creating game
+        await fetchPlayers(sessionData.id);
+
+        // Subscribe to realtime updates
+        subscribeToGameUpdates(sessionData.id);
+      }
     }
 
     setLoading(false);
@@ -116,7 +215,14 @@ export default function LobbyPage() {
       .single();
 
     if (sessionError || !sessionData) {
-      alert('C\u00f3digo de convite inv\u00e1lido!');
+      alert('Código de convite inválido!');
+      setLoading(false);
+      return;
+    }
+
+    // Check if game is still in waiting status
+    if (sessionData.status !== 'waiting') {
+      alert('Esta sala já começou!');
       setLoading(false);
       return;
     }
@@ -138,8 +244,17 @@ export default function LobbyPage() {
       return;
     }
 
-    sessionStorage.setItem('gameSessionId', sessionData.id);
-    router.push('/game');
+    // Set game session and go to waiting room
+    setGameSession(sessionData);
+    setJoinCode('');
+
+    // Fetch players for this game
+    await fetchPlayers(sessionData.id);
+
+    // Subscribe to realtime updates
+    subscribeToGameUpdates(sessionData.id);
+
+    setLoading(false);
   };
 
   const handleStartGame = async () => {
@@ -147,26 +262,37 @@ export default function LobbyPage() {
 
     setGameStarting(true);
 
+    // Shuffle theme_picker_order
+    const shuffledOrder = [...players].sort(() => Math.random() - 0.5).map(p => p.player_id);
+
     const { error } = await supabase
       .from('game_sessions')
-      .update({ status: 'theme_selection', started_at: new Date().toISOString() })
+      .update({
+        status: 'theme_selection',
+        current_round: 1,
+        theme_picker_order: shuffledOrder,
+        started_at: new Date().toISOString(),
+      })
       .eq('id', gameSession.id);
 
-    if (!error) {
-      sessionStorage.setItem('gameSessionId', gameSession.id);
-      router.push('/game');
+    if (error) {
+      console.error('Error starting game:', error);
+      setGameStarting(false);
+      return;
     }
 
-    setGameStarting(false);
+    // Save gameSessionId to sessionStorage and redirect
+    sessionStorage.setItem('gameSessionId', gameSession.id);
+    router.push('/game');
   };
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(inviteCode);
-    alert('C\u00f3digo copiado para a \u00e1rea de transfer\u00eancia!');
+    alert('Código copiado para a área de transferência!');
   };
 
   const shareOnWhatsApp = () => {
-    const text = `Oxe! Vem jogar OxeJogos comigo! C\u00f3digo: ${inviteCode}`;
+    const text = `Oxe! Vem jogar OxeJogos comigo! Código: ${inviteCode}`;
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(whatsappUrl, '_blank');
   };
@@ -175,7 +301,7 @@ export default function LobbyPage() {
     return (
       <div className="min-h-screen bg-gradient-to-b from-oxe-light to-white flex items-center justify-center">
         <div className="text-center">
-          <div className="text-5xl mb-4">\u231b</div>
+          <div className="text-5xl mb-4">⏳</div>
           <p className="font-fredoka text-xl text-oxe-navy">Carregando...</p>
         </div>
       </div>
@@ -196,14 +322,14 @@ export default function LobbyPage() {
               Bem-vindo, {profile?.full_name || 'Jogador'}!
             </h1>
             <p className="text-gray-600 font-nunito">
-              Pronto para uma partida \u00e9pica?
+              Pronto para uma partida épica?
             </p>
           </div>
           <Link
             href="#profile"
             className="w-12 h-12 bg-oxe-blue text-white rounded-full flex items-center justify-center font-fredoka text-xl"
           >
-            \ud83d\udc64
+            👤
           </Link>
         </div>
       </header>
@@ -218,9 +344,9 @@ export default function LobbyPage() {
           >
             {/* Create Game Card */}
             <div className="bg-white rounded-xl shadow-lg p-8 hover:shadow-xl transition-all">
-              <div className="text-5xl mb-4">\u2728</div>
+              <div className="text-5xl mb-4">✨</div>
               <h2 className="text-2xl font-fredoka text-oxe-navy mb-4">
-                Criar Nova Divers\u00e3o
+                Criar Nova Diversão
               </h2>
               <p className="text-gray-600 font-nunito mb-6">
                 Crie uma nova sala e convide seus amigos para jogar
@@ -235,19 +361,19 @@ export default function LobbyPage() {
 
             {/* Join Game Card */}
             <div className="bg-white rounded-xl shadow-lg p-8 hover:shadow-xl transition-all">
-              <div className="text-5xl mb-4">\ud83c\udf9f\ufe0f</div>
+              <div className="text-5xl mb-4">🎟️</div>
               <h2 className="text-2xl font-fredoka text-oxe-navy mb-4">
                 Entrar com Convite
               </h2>
               <p className="text-gray-600 font-nunito mb-6">
-                Cole o c\u00f3digo que seu amigo enviou
+                Cole o código que seu amigo enviou
               </p>
               <div className="space-y-3">
                 <input
                   type="text"
                   value={joinCode}
                   onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  placeholder="C\u00f3digo (ex: ABC12345)"
+                  placeholder="Código (ex: ABC12345)"
                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg font-nunito uppercase tracking-wider"
                 />
                 <button
@@ -261,7 +387,7 @@ export default function LobbyPage() {
             </div>
           </motion.div>
         ) : (
-          // Game Creation Panel
+          // Game Waiting Room Panel
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -269,13 +395,13 @@ export default function LobbyPage() {
           >
             {/* Invite Link Section */}
             <div className="bg-gradient-to-r from-oxe-blue to-oxe-navy text-white rounded-xl p-8">
-              <h2 className="text-3xl font-fredoka font-bold mb-4">Sua Sala Est\u00e1 Pronta!</h2>
+              <h2 className="text-3xl font-fredoka font-bold mb-4">Sua Sala Está Pronta!</h2>
               <p className="text-oxe-light font-nunito mb-6">
-                Compartilhe este c\u00f3digo com seus amigos para que eles possam entrar
+                Compartilhe este código com seus amigos para que eles possam entrar
               </p>
 
               <div className="bg-white bg-opacity-20 rounded-lg p-6 mb-6">
-                <p className="text-sm text-oxe-light font-nunito mb-2">C\u00f3digo de Convite</p>
+                <p className="text-sm text-oxe-light font-nunito mb-2">Código de Convite</p>
                 <p className="text-4xl font-fredoka font-bold tracking-wider text-center mb-4">
                   {inviteCode}
                 </p>
@@ -284,13 +410,13 @@ export default function LobbyPage() {
                     onClick={copyToClipboard}
                     className="flex-1 px-4 py-2 bg-white text-oxe-blue rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all"
                   >
-                    \ud83d\udccb Copiar
+                    📋 Copiar
                   </button>
                   <button
                     onClick={shareOnWhatsApp}
                     className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg font-fredoka font-bold hover:bg-green-600 transition-all"
                   >
-                    \ud83d\udcac WhatsApp
+                    💬 WhatsApp
                   </button>
                 </div>
               </div>
@@ -334,7 +460,12 @@ export default function LobbyPage() {
                       </div>
                       {player.player_id === user.id && (
                         <span className="ml-auto text-sm bg-oxe-blue text-white px-3 py-1 rounded-full font-nunito">
-                          Voc\u00ea
+                          Você
+                        </span>
+                      )}
+                      {gameSession?.captain_id === player.player_id && (
+                        <span className="ml-auto text-sm bg-oxe-gold text-oxe-navy px-3 py-1 rounded-full font-nunito">
+                          Capitão
                         </span>
                       )}
                     </div>
@@ -345,20 +476,26 @@ export default function LobbyPage() {
               </div>
             </div>
 
-            {/* Start Game Button */}
-            <button
-              onClick={handleStartGame}
-              disabled={players.length < 2 || gameStarting}
-              className="w-full px-6 py-4 bg-gradient-to-r from-oxe-gold to-orange-500 text-oxe-navy rounded-lg font-fredoka font-bold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {gameStarting ? 'Iniciando...' : '\ud83d\ude80 Come\u00e7ar o Jogo!'}
-            </button>
+            {/* Start Game Button - Only for Captain */}
+            {gameSession?.captain_id === user.id && (
+              <button
+                onClick={handleStartGame}
+                disabled={players.length < 2 || gameStarting}
+                className="w-full px-6 py-4 bg-gradient-to-r from-oxe-gold to-orange-500 text-oxe-navy rounded-lg font-fredoka font-bold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {gameStarting ? 'Iniciando...' : '🚀 Começar o Jogo!'}
+              </button>
+            )}
 
             {/* Back Button */}
             <button
               onClick={() => {
                 setGameSession(null);
                 setInviteCode('');
+                setPlayers([]);
+                if (unsubscribeRef.current) {
+                  unsubscribeRef.current();
+                }
               }}
               className="w-full px-6 py-3 bg-gray-200 text-gray-700 rounded-lg font-fredoka hover:bg-gray-300 transition-all"
             >
