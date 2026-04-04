@@ -14,15 +14,12 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Fetch game session by invite code
   const { data: gameSession, error: sessionError } = await supabase
     .from('game_sessions')
-    .select(
-      `
+    .select(`
       *,
       captain:profiles(full_name)
-    `
-    )
+    `)
     .eq('invite_code', params.code.toUpperCase())
     .single();
 
@@ -51,26 +48,22 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-oxe-light via-white to-gray-50 flex flex-col items-center justify-center px-4 py-8">
       <div className="max-w-md w-full">
-        {/* Mascot */}
         <div className="text-center mb-8 relative h-40">
           <Image
-            src="/images/oxebot-hero.svg"
+            src="/images/oxebot-hero.png"
             alt="OxeMedic"
             fill
             className="object-contain"
             priority
-            unoptimized
           />
         </div>
 
-        {/* Speech Bubble */}
         <div className="bg-white rounded-lg shadow-md p-4 mb-8 border-2 border-oxe-blue text-center">
           <p className="text-center font-nunito text-gray-700">
             Oxe! Você foi convidado pra uma partida de OxeJogos! Tá afim?
           </p>
         </div>
 
-        {/* Game Info Card */}
         <div className="bg-white rounded-xl shadow-lg p-8 space-y-6">
           <div>
             <h2 className="text-2xl font-fredoka text-oxe-navy mb-4">
@@ -78,21 +71,15 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
             </h2>
 
             <div className="space-y-4">
-              {/* Creator */}
               <div className="bg-oxe-light rounded-lg p-4">
-                <p className="text-xs text-gray-600 font-nunito mb-1">
-                  Criada por
-                </p>
+                <p className="text-xs text-gray-600 font-nunito mb-1">Criada por</p>
                 <p className="font-fredoka text-lg text-oxe-navy">
                   {gameSession.captain?.full_name || 'Capitão'}
                 </p>
               </div>
 
-              {/* Game Mode */}
               <div className="bg-oxe-light rounded-lg p-4">
-                <p className="text-xs text-gray-600 font-nunito mb-1">
-                  Modo de Jogo
-                </p>
+                <p className="text-xs text-gray-600 font-nunito mb-1">Modo de Jogo</p>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">
                     {GAME_MODE_CONFIG[gameSession.game_mode as GameMode]?.emoji}
@@ -103,11 +90,8 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
                 </div>
               </div>
 
-              {/* Difficulty */}
               <div className="bg-oxe-light rounded-lg p-4">
-                <p className="text-xs text-gray-600 font-nunito mb-1">
-                  Dificuldade
-                </p>
+                <p className="text-xs text-gray-600 font-nunito mb-1">Dificuldade</p>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">
                     {DIFFICULTY_CONFIG[gameSession.difficulty as Difficulty]?.emoji}
@@ -118,11 +102,8 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
                 </div>
               </div>
 
-              {/* Board Size */}
               <div className="bg-oxe-light rounded-lg p-4">
-                <p className="text-xs text-gray-600 font-nunito mb-1">
-                  Tamanho do Tabuleiro
-                </p>
+                <p className="text-xs text-gray-600 font-nunito mb-1">Tamanho do Tabuleiro</p>
                 <p className="font-fredoka text-lg text-oxe-navy">
                   {gameSession.board_size} casas
                 </p>
@@ -130,7 +111,6 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="space-y-3 pt-4">
             {user ? (
               <Link

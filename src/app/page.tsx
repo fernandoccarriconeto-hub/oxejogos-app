@@ -79,12 +79,11 @@ export default function Home() {
           <FadeInSection>
             <div className="relative h-96 md:h-full">
               <Image
-                src="/images/oxebot-hero.svg"
+                src="/images/oxebot-hero.png"
                 alt="OxeMedic - Mascote OxeJogos"
                 fill
                 className="object-contain"
                 priority
-                unoptimized
               />
               <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-white rounded-xl shadow-xl p-4 max-w-xs">
                 <p className="text-sm md:text-base text-gray-800 font-nunito">

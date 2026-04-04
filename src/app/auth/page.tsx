@@ -136,6 +136,11 @@ export default function AuthPage() {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.senha,
+        options: {
+          data: {
+            full_name: formData.nome,
+          },
+        },
       });
 
       if (authError) {
@@ -145,22 +150,18 @@ export default function AuthPage() {
       }
 
       if (authData.user) {
+        // Profile is auto-created by database trigger
+        // Update with additional info
         const { error: profileError } = await supabase
           .from('profiles')
-          .insert({
-            id: authData.user.id,
+          .update({
             full_name: formData.nome,
             whatsapp: formData.whatsapp,
-            avatar_type: 'preset',
-            total_games_played: 0,
-            total_wins: 0,
-            total_points: 0,
-          });
+          })
+          .eq('id', authData.user.id);
 
         if (profileError) {
-          setErrors({ submit: 'Erro ao criar perfil. Tente novamente.' });
-          setLoading(false);
-          return;
+          console.error('Profile update error:', profileError);
         }
 
         router.push('/avatar');
@@ -185,12 +186,11 @@ export default function AuthPage() {
         {/* Mascot */}
         <div className="text-center mb-8 relative h-40">
           <Image
-            src="/images/oxebot-hero.svg"
+            src="/images/oxebot-hero.png"
             alt="OxeMedic"
             fill
             className="object-contain"
             priority
-            unoptimized
           />
         </div>
 
@@ -232,7 +232,6 @@ export default function AuthPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Nome (Signup only) */}
             {mode === 'signup' && (
               <div>
                 <label className="block text-sm font-nunito font-semibold text-gray-700 mb-2">
@@ -252,14 +251,11 @@ export default function AuthPage() {
                   )}
                 />
                 {errors.nome && (
-                  <p className="text-red-500 text-sm mt-1 font-nunito">
-                    {errors.nome}
-                  </p>
+                  <p className="text-red-500 text-sm mt-1 font-nunito">{errors.nome}</p>
                 )}
               </div>
             )}
 
-            {/* Email */}
             <div>
               <label className="block text-sm font-nunito font-semibold text-gray-700 mb-2">
                 E-mail
@@ -278,13 +274,10 @@ export default function AuthPage() {
                 )}
               />
               {errors.email && (
-                <p className="text-red-500 text-sm mt-1 font-nunito">
-                  {errors.email}
-                </p>
+                <p className="text-red-500 text-sm mt-1 font-nunito">{errors.email}</p>
               )}
             </div>
 
-            {/* WhatsApp (Signup only) */}
             {mode === 'signup' && (
               <div>
                 <label className="block text-sm font-nunito font-semibold text-gray-700 mb-2">
@@ -301,7 +294,6 @@ export default function AuthPage() {
               </div>
             )}
 
-            {/* Senha */}
             <div>
               <label className="block text-sm font-nunito font-semibold text-gray-700 mb-2">
                 Senha
@@ -320,13 +312,10 @@ export default function AuthPage() {
                 )}
               />
               {errors.senha && (
-                <p className="text-red-500 text-sm mt-1 font-nunito">
-                  {errors.senha}
-                </p>
+                <p className="text-red-500 text-sm mt-1 font-nunito">{errors.senha}</p>
               )}
             </div>
 
-            {/* Confirmar Senha (Signup only) */}
             {mode === 'signup' && (
               <div>
                 <label className="block text-sm font-nunito font-semibold text-gray-700 mb-2">
@@ -346,14 +335,11 @@ export default function AuthPage() {
                   )}
                 />
                 {errors.confirmarSenha && (
-                  <p className="text-red-500 text-sm mt-1 font-nunito">
-                    {errors.confirmarSenha}
-                  </p>
+                  <p className="text-red-500 text-sm mt-1 font-nunito">{errors.confirmarSenha}</p>
                 )}
               </div>
             )}
 
-            {/* Termos (Signup only) */}
             {mode === 'signup' && (
               <div className="flex items-start gap-3">
                 <input
@@ -372,14 +358,12 @@ export default function AuthPage() {
               <p className="text-red-500 text-sm font-nunito">{errors.termos}</p>
             )}
 
-            {/* Error Message */}
             {errors.submit && (
               <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3">
                 <p className="text-red-700 text-sm font-nunito">{errors.submit}</p>
               </div>
             )}
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
@@ -393,7 +377,6 @@ export default function AuthPage() {
             </button>
           </form>
 
-          {/* Links */}
           <div className="mt-6 space-y-3">
             {mode === 'login' && (
               <div className="text-center">
