@@ -43,7 +43,7 @@ export default function LobbyPage() {
         profile:player_id(id, full_name, username, avatar_url)
       `)
       .eq('game_session_id', gameSessionId)
-      .order('created_at', { ascending: true });
+      .order('joined_at', { ascending: true });
 
     if (error) {
       console.error('Error fetching players:', error);
@@ -227,21 +227,33 @@ export default function LobbyPage() {
       return;
     }
 
-    const { data: playerData, error: playerError } = await supabase
+    // Check if player already joined this game
+    const { data: existingPlayer } = await supabase
       .from('game_players')
-      .insert({
-        game_session_id: sessionData.id,
-        player_id: user.id,
-        board_position: 0,
-        total_score: 0,
-        is_connected: true,
-      })
-      .select();
+      .select('id')
+      .eq('game_session_id', sessionData.id)
+      .eq('player_id', user.id)
+      .maybeSingle();
 
-    if (playerError) {
-      alert('Erro ao entrar na sala!');
-      setLoading(false);
-      return;
+    if (!existingPlayer) {
+      // Player not yet in this game, insert them
+      const { error: playerError } = await supabase
+        .from('game_players')
+        .insert({
+          game_session_id: sessionData.id,
+          player_id: user.id,
+          board_position: 0,
+          total_score: 0,
+          is_connected: true,
+        });
+
+      if (playerError) {
+        console.error('Error joining game:', playerError);
+        alert('Erro ao entrar na sala!');
+        setLoading(false);
+        return;
+      }
+
     }
 
     // Set game session and go to waiting room
