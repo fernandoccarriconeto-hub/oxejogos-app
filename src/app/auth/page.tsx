@@ -41,28 +41,28 @@ export default function AuthPage() {
     const newErrors: FormErrors = {};
 
     if (!formData.email) {
-      newErrors.email = 'E-mail \u00e9 obrigat\u00f3rio';
+      newErrors.email = 'E-mail é obrigatório';
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'E-mail inv\u00e1lido';
+      newErrors.email = 'E-mail inválido';
     }
 
     if (!formData.senha) {
-      newErrors.senha = 'Senha \u00e9 obrigat\u00f3ria';
+      newErrors.senha = 'Senha é obrigatória';
     } else if (formData.senha.length < 6) {
-      newErrors.senha = 'Senha deve ter no m\u00ednimo 6 caracteres';
+      newErrors.senha = 'Senha deve ter no mínimo 6 caracteres';
     }
 
     if (mode === 'signup') {
       if (!formData.nome) {
-        newErrors.nome = 'Nome \u00e9 obrigat\u00f3rio';
+        newErrors.nome = 'Nome é obrigatório';
       }
 
       if (formData.senha !== formData.confirmarSenha) {
-        newErrors.confirmarSenha = 'Senhas n\u00e3o coincidem';
+        newErrors.confirmarSenha = 'Senhas não coincidem';
       }
 
       if (!formData.termos) {
-        newErrors.termos = 'Voc\u00ea deve aceitar os termos';
+        newErrors.termos = 'Você deve aceitar os termos';
       }
     }
 
@@ -185,11 +185,12 @@ export default function AuthPage() {
         {/* Mascot */}
         <div className="text-center mb-8 relative h-40">
           <Image
-            src="/images/oxebot-hero.png"
+            src="/images/oxebot-hero.svg"
             alt="OxeMedic"
             fill
             className="object-contain"
             priority
+            unoptimized
           />
         </div>
 
@@ -198,7 +199,7 @@ export default function AuthPage() {
           <p className="text-center font-nunito text-gray-700">
             {mode === 'login'
               ? 'Bem-vindo de volta! Bora jogar?'
-              : 'Vamos criar sua conta e come\u00e7ar a divers\u00e3o!'}
+              : 'Vamos criar sua conta e começar a diversão!'}
           </p>
         </div>
 
@@ -363,7 +364,7 @@ export default function AuthPage() {
                   className="mt-1 w-4 h-4"
                 />
                 <label className="text-sm font-nunito text-gray-700">
-                  Aceito os termos de servi\u00e7o e pol\u00edtica de privacidade
+                  Aceito os termos de serviço e política de privacidade
                 </label>
               </div>
             )}
@@ -408,7 +409,7 @@ export default function AuthPage() {
             <div className="text-center text-sm text-gray-600 font-nunito">
               {mode === 'login' ? (
                 <>
-                  N\u00e3o tem conta?{' '}
+                  Não tem conta?{' '}
                   <button
                     onClick={() => setMode('signup')}
                     className="text-oxe-blue hover:underline font-semibold"
@@ -418,7 +419,7 @@ export default function AuthPage() {
                 </>
               ) : (
                 <>
-                  J\u00e1 tem conta?{' '}
+                  Já tem conta?{' '}
                   <button
                     onClick={() => setMode('login')}
                     className="text-oxe-blue hover:underline font-semibold"

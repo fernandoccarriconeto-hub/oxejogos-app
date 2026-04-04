@@ -54,11 +54,12 @@ export default async function ConvitePage({ params }: ConvitePageProps) {
         {/* Mascot */}
         <div className="text-center mb-8 relative h-40">
           <Image
-            src="/images/oxebot-hero.png"
+            src="/images/oxebot-hero.svg"
             alt="OxeMedic"
             fill
             className="object-contain"
             priority
+            unoptimized
           />
         </div>
 
