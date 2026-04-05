@@ -133,6 +133,15 @@ export default function GamePage() {
   const [surprisePlayerId, setSurprisePlayerId] = useState<string | null>(null);
   const [surprisePlayerName, setSurprisePlayerName] = useState<string>('');
   const [surpriseQueue, setSurpriseQueue] = useState<{ playerId: string; playerName: string }[]>([]);
+  // Detailed score breakdown for results card
+  const [scoreBreakdowns, setScoreBreakdowns] = useState<{
+    playerId: string;
+    playerName: string;
+    pointsCorrectAnswer: number;
+    pointsReceivedVotes: number;
+    voterNames: string[];
+    totalRoundPoints: number;
+  }[]>([]);
 
   // Fetch players with profiles
   const fetchPlayers = useCallback(async (sessionId: string) => {
@@ -372,17 +381,11 @@ export default function GamePage() {
           setTimeRemaining(VOTE_TIME_SECONDS);
           setSelectedVote(null);
         } else if (updatedRound.status === 'results') {
-          // Fetch round scores
-          const { data: scores } = await supabase
-            .from('round_scores')
-            .select('*')
-            .eq('round_id', updatedRound.id);
-          if (scores) setRoundScores(scores);
-          // Small delay to let board positions update, then check surprise
-          setTimeout(() => {
-            fetchPlayers(gameSession.id).then(() => {
-              setCurrentScreen('results');
-            });
+          // Small delay to let board positions update, then load breakdown
+          setTimeout(async () => {
+            await loadScoreBreakdown(updatedRound.id, gameSession.id);
+            await fetchPlayers(gameSession.id);
+            setCurrentScreen('results');
           }, 1500);
         }
       })
@@ -498,6 +501,58 @@ export default function GamePage() {
       setUserAnswer('');
     }
   };
+
+  // Load detailed score breakdown for the results card
+  const loadScoreBreakdown = useCallback(async (roundId: string, sessionId: string) => {
+    // Fetch votes, answers, scores, and player profiles
+    const [votesRes, answersRes, scoresRes, playersRes] = await Promise.all([
+      supabase.from('votes').select('*').eq('round_id', roundId),
+      supabase.from('player_answers').select('*').eq('round_id', roundId),
+      supabase.from('round_scores').select('*').eq('round_id', roundId),
+      supabase.from('game_players').select('*').eq('game_session_id', sessionId),
+    ]);
+
+    const votes = votesRes.data || [];
+    const answers = answersRes.data || [];
+    const scores = scoresRes.data || [];
+    const gamePlayers = playersRes.data || [];
+
+    const playerIds = gamePlayers.map((p) => p.player_id);
+    const { data: profilesData } = await supabase.from('profiles').select('id, full_name').in('id', playerIds);
+    const profileMap = new Map(profilesData?.map((p) => [p.id, p.full_name]) || []);
+    const getName = (id: string) => profileMap.get(id) || 'Jogador';
+
+    // Map answer_id -> owner player_id
+    const answerOwnerMap = new Map<string, string>();
+    answers.forEach((a) => answerOwnerMap.set(a.id, a.player_id));
+
+    // Build breakdown per player
+    const breakdowns = scores.map((score) => {
+      const voterNames: string[] = [];
+
+      // Find who voted for this player's answer
+      votes.forEach((vote) => {
+        if (vote.voted_answer_id) {
+          const ownerId = answerOwnerMap.get(vote.voted_answer_id);
+          if (ownerId === score.player_id) {
+            voterNames.push(getName(vote.voter_id));
+          }
+        }
+      });
+
+      return {
+        playerId: score.player_id,
+        playerName: getName(score.player_id),
+        pointsCorrectAnswer: score.points_correct_answer,
+        pointsReceivedVotes: score.points_received_votes,
+        voterNames,
+        totalRoundPoints: score.total_round_points,
+      };
+    });
+
+    setScoreBreakdowns(breakdowns.sort((a, b) => b.totalRoundPoints - a.totalRoundPoints));
+    setRoundScores(scores);
+  }, [supabase]);
 
   // Handle moving to voting phase (captain action — with fallback)
   const handleMoveToVoting = async () => {
@@ -658,11 +713,11 @@ export default function GamePage() {
     setSurpriseSelectedOption(selectedLetter);
     setSurpriseResult(isCorrect ? 'correct' : 'wrong');
 
-    // Update board position based on result
+    // Update board position based on result (correct = +2 casas, wrong = 0)
     const myPlayer = players.find((p) => p.player_id === user.id);
-    if (myPlayer) {
-      const bonus = isCorrect ? 2 : -1;
-      const newPosition = Math.max(0, myPlayer.board_position + bonus);
+    if (myPlayer && isCorrect) {
+      const bonus = 2;
+      const newPosition = myPlayer.board_position + bonus;
 
       await supabase
         .from('game_players')
@@ -978,7 +1033,7 @@ export default function GamePage() {
                   {isMySuprise ? 'É a sua vez!' : `${surprisePlayerName} está respondendo...`}
                 </p>
                 <p className="text-gray-600 font-nunito mt-2">
-                  Acertou? +2 casas. Errou? -1 casa. Tempo: 15 segundos!
+                  Acertou? +2 casas! Tempo: 15 segundos!
                 </p>
               </div>
 
@@ -999,7 +1054,7 @@ export default function GamePage() {
                     {surpriseResult === 'correct' ? (
                       <span className="text-green-600">Acertou! +2 casas!</span>
                     ) : (
-                      <span className="text-red-500">Errou! -1 casa</span>
+                      <span className="text-red-500">Errou! Fica na mesma casa.</span>
                     )}
                   </h3>
 
@@ -1095,25 +1150,42 @@ export default function GamePage() {
                   {currentRound?.ai_correct_answer}
                 </p>
 
-                {roundScores.length > 0 && (
+                {scoreBreakdowns.length > 0 && (
                   <>
                     <h3 className="text-xl font-fredoka text-oxe-navy mb-4">Placar da Rodada</h3>
-                    <div className="space-y-3">
-                      {roundScores
-                        .sort((a, b) => b.total_round_points - a.total_round_points)
-                        .map((score, idx) => {
-                          const player = players.find((p) => p.player_id === score.player_id);
-                          return (
-                            <div key={idx} className="flex items-center justify-between p-4 bg-oxe-light rounded-lg">
-                              <p className="font-fredoka text-oxe-navy">
-                                {(player?.profile as any)?.full_name || 'Jogador'}
-                              </p>
-                              <p className="text-lg font-fredoka text-oxe-blue">
-                                +{score.total_round_points} pts
-                              </p>
+                    <div className="space-y-4">
+                      {scoreBreakdowns.map((bd, idx) => (
+                        <div key={idx} className="p-4 bg-oxe-light rounded-xl border border-gray-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="font-fredoka text-lg text-oxe-navy">{bd.playerName}</p>
+                            <p className="text-xl font-fredoka font-bold text-oxe-blue">
+                              +{bd.totalRoundPoints} {bd.totalRoundPoints === 1 ? 'ponto' : 'pontos'}
+                            </p>
+                          </div>
+                          {bd.totalRoundPoints > 0 ? (
+                            <div className="text-sm font-nunito text-gray-600 space-y-1">
+                              {bd.pointsCorrectAnswer > 0 && (
+                                <p className="flex items-center gap-1">
+                                  <span className="text-green-600 font-bold">+{bd.pointsCorrectAnswer}</span>
+                                  <span>acertou a resposta da IA</span>
+                                </p>
+                              )}
+                              {bd.pointsReceivedVotes > 0 && (
+                                <p className="flex items-center gap-1">
+                                  <span className="text-blue-600 font-bold">+{bd.pointsReceivedVotes}</span>
+                                  <span>
+                                    {bd.voterNames.length === 1
+                                      ? `voto de ${bd.voterNames[0]}`
+                                      : `votos de ${bd.voterNames.join(', ')}`}
+                                  </span>
+                                </p>
+                              )}
                             </div>
-                          );
-                        })}
+                          ) : (
+                            <p className="text-sm font-nunito text-gray-400">Nenhum ponto nesta rodada</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </>
                 )}
