@@ -132,6 +132,7 @@ export default function GamePage() {
   const [surpriseLoading, setSurpriseLoading] = useState(false);
   const [surprisePlayerId, setSurprisePlayerId] = useState<string | null>(null);
   const [surprisePlayerName, setSurprisePlayerName] = useState<string>('');
+  const [surpriseQueue, setSurpriseQueue] = useState<{ playerId: string; playerName: string }[]>([]);
 
   // Fetch players with profiles
   const fetchPlayers = useCallback(async (sessionId: string) => {
@@ -563,71 +564,79 @@ export default function GamePage() {
     }
   };
 
-  // Check if ANY player landed on surprise house after scores
+  // Trigger a surprise for a specific player (captain fetches question, others wait for realtime)
+  const triggerSurprise = useCallback(async (playerId: string, playerName: string) => {
+    if (!user || !gameSession) return;
+
+    if (gameSession.captain_id === user.id) {
+      setSurpriseLoading(true);
+      setCurrentScreen('surprise');
+      setSurpriseResult(null);
+      setSurpriseSelectedOption(null);
+      setSurprisePlayerId(playerId);
+      setSurprisePlayerName(playerName);
+
+      try {
+        const currentTheme = currentRound?.theme || 'geral';
+        const themeName = THEMES.find((t) => t.id === currentTheme)?.name || currentTheme;
+        const res = await fetch('/api/ai/surprise', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            theme: themeName,
+            difficulty: gameSession.difficulty,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          await supabase
+            .from('game_sessions')
+            .update({
+              surprise_state: {
+                player_id: playerId,
+                player_name: playerName,
+                question: data.question,
+                correctAnswer: data.correctAnswer,
+                options: data.options,
+                result: null,
+              },
+            })
+            .eq('id', gameSession.id);
+        }
+      } catch (error) {
+        console.error('Error fetching surprise question:', error);
+      } finally {
+        setSurpriseLoading(false);
+      }
+    } else {
+      setCurrentScreen('surprise');
+      setSurpriseLoading(true);
+      setSurprisePlayerId(playerId);
+      setSurprisePlayerName(playerName);
+      setSurpriseResult(null);
+      setSurpriseSelectedOption(null);
+    }
+  }, [user, gameSession, currentRound, supabase]);
+
+  // Check ALL players for surprise house landing, queue them, and trigger the first
   const checkSurpriseHouse = useCallback(async () => {
     if (!user || !gameSession) return;
 
-    // Check all players for surprise house landing
+    const surprisePlayers: { playerId: string; playerName: string }[] = [];
     for (const player of players) {
       if (isSurpriseHouse(player.board_position) && player.board_position > 0) {
         const playerName = (player.profile as any)?.full_name || 'Jogador';
-
-        // Only the captain fetches the question and writes to DB (avoid duplicates)
-        if (gameSession.captain_id === user.id) {
-          setSurpriseLoading(true);
-          setCurrentScreen('surprise');
-          setSurpriseResult(null);
-          setSurpriseSelectedOption(null);
-          setSurprisePlayerId(player.player_id);
-          setSurprisePlayerName(playerName);
-
-          try {
-            const currentTheme = currentRound?.theme || 'geral';
-            const themeName = THEMES.find((t) => t.id === currentTheme)?.name || currentTheme;
-            const res = await fetch('/api/ai/surprise', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                theme: themeName,
-                difficulty: gameSession.difficulty,
-              }),
-            });
-
-            if (res.ok) {
-              const data = await res.json();
-              // Save surprise state to game_sessions for all players to see
-              await supabase
-                .from('game_sessions')
-                .update({
-                  surprise_state: {
-                    player_id: player.player_id,
-                    player_name: playerName,
-                    question: data.question,
-                    correctAnswer: data.correctAnswer,
-                    options: data.options,
-                    result: null,
-                  },
-                })
-                .eq('id', gameSession.id);
-            }
-          } catch (error) {
-            console.error('Error fetching surprise question:', error);
-          } finally {
-            setSurpriseLoading(false);
-          }
-        } else {
-          // Non-captain players just show the surprise screen and wait for realtime update
-          setCurrentScreen('surprise');
-          setSurpriseLoading(true);
-          setSurprisePlayerId(player.player_id);
-          setSurprisePlayerName(playerName);
-          setSurpriseResult(null);
-          setSurpriseSelectedOption(null);
-        }
-        break; // Only handle one surprise at a time
+        surprisePlayers.push({ playerId: player.player_id, playerName });
       }
     }
-  }, [user, gameSession, players, currentRound, supabase]);
+
+    if (surprisePlayers.length === 0) return;
+
+    // Save the queue (remaining after the first) and trigger the first surprise
+    setSurpriseQueue(surprisePlayers.slice(1));
+    await triggerSurprise(surprisePlayers[0].playerId, surprisePlayers[0].playerName);
+  }, [user, gameSession, players, triggerSurprise]);
 
   // Handle surprise answer submission (multiple choice)
   const handleSurpriseAnswer = async (selectedLetter: string) => {
@@ -672,16 +681,11 @@ export default function GamePage() {
       .eq('id', gameSession.id);
   };
 
-  // Handle closing surprise and going back to results (captain only)
+  // Handle closing surprise - process next in queue or go back to results
   const handleCloseSurprise = async () => {
     if (!gameSession) return;
 
-    // Clear surprise state in DB so all players go back to results
-    await supabase
-      .from('game_sessions')
-      .update({ surprise_state: null })
-      .eq('id', gameSession.id);
-
+    // Reset local surprise state
     setSurpriseQuestion('');
     setSurpriseAnswer('');
     setSurpriseOptions([]);
@@ -689,7 +693,21 @@ export default function GamePage() {
     setSurpriseResult(null);
     setSurprisePlayerId(null);
     setSurprisePlayerName('');
-    setCurrentScreen('results');
+
+    if (surpriseQueue.length > 0) {
+      // There are more surprises to process - trigger the next one
+      const next = surpriseQueue[0];
+      setSurpriseQueue(surpriseQueue.slice(1));
+      await triggerSurprise(next.playerId, next.playerName);
+    } else {
+      // No more surprises - clear DB state and go back to results
+      await supabase
+        .from('game_sessions')
+        .update({ surprise_state: null })
+        .eq('id', gameSession.id);
+
+      setCurrentScreen('results');
+    }
   };
 
   // Handle next round
