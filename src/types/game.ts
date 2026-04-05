@@ -33,7 +33,7 @@ export type ThemeId = typeof THEMES[number]['id'];
 
 export const ANSWER_TIME_SECONDS = 30;
 export const VOTE_TIME_SECONDS = 30;
-export const SURPRISE_TIME_SECONDS = 30;
+export const SURPRISE_TIME_SECONDS = 15;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 12;
 export const SURPRISE_HOUSES_INTERVAL = 3;
@@ -59,6 +59,16 @@ export interface Profile {
   total_points: number;
 }
 
+export interface SurpriseState {
+  player_id: string;
+  player_name: string;
+  question: string;
+  correctAnswer: string;
+  options: { letter: string; text: string; isCorrect: boolean }[];
+  result: 'correct' | 'wrong' | null;
+  selectedOption?: string;
+}
+
 export interface GameSession {
   id: string;
   invite_code: string;
@@ -71,6 +81,7 @@ export interface GameSession {
   max_players: number;
   theme_picker_order: string[];
   current_theme_picker_index: number;
+  surprise_state?: SurpriseState | null;
   created_at: string;
   started_at?: string;
   finished_at?: string;
