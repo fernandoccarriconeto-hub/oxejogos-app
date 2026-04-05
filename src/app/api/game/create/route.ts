@@ -1,19 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { GameMode, GAME_MODE_CONFIG } from '@/types/game';
+import { generateInviteCode } from '@/lib/utils';
 
 interface CreateGameRequest {
   gameMode: GameMode;
   difficulty: string;
-}
-
-function generateInviteCode(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
 }
 
 export async function POST(request: NextRequest) {
@@ -27,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json(
-        { error: 'Usu\u00e1rio n\u00e3o autenticado' },
+        { error: 'Usuário não autenticado' },
         { status: 401 }
       );
     }
@@ -37,14 +29,14 @@ export async function POST(request: NextRequest) {
 
     if (!gameMode || !difficulty) {
       return NextResponse.json(
-        { error: 'Modo de jogo e dificuldade s\u00e3o obrigat\u00f3rios' },
+        { error: 'Modo de jogo e dificuldade são obrigatórios' },
         { status: 400 }
       );
     }
 
     if (!GAME_MODE_CONFIG[gameMode]) {
       return NextResponse.json(
-        { error: 'Modo de jogo inv\u00e1lido' },
+        { error: 'Modo de jogo inválido' },
         { status: 400 }
       );
     }
@@ -72,7 +64,7 @@ export async function POST(request: NextRequest) {
 
     if (!isUnique) {
       return NextResponse.json(
-        { error: 'Erro ao gerar c\u00f3digo de convite' },
+        { error: 'Erro ao gerar código de convite' },
         { status: 500 }
       );
     }
@@ -97,9 +89,9 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (gameError || !gameSession) {
-      console.error('Erro ao criar sess\u00e3o de jogo:', gameError);
+      console.error('Erro ao criar sessão de jogo:', gameError);
       return NextResponse.json(
-        { error: 'Erro ao criar sess\u00e3o de jogo' },
+        { error: 'Erro ao criar sessão de jogo' },
         { status: 500 }
       );
     }
@@ -119,7 +111,7 @@ export async function POST(request: NextRequest) {
     if (playerError) {
       console.error('Erro ao adicionar jogador:', playerError);
       return NextResponse.json(
-        { error: 'Erro ao adicionar jogador \u00e0 sess\u00e3o' },
+        { error: 'Erro ao adicionar jogador à sessão' },
         { status: 500 }
       );
     }

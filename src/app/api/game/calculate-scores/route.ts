@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import {
   POINTS_CORRECT_ANSWER,
   POINTS_RECEIVED_VOTE,
-  POINTS_AI_CREATIVE_BONUS,
   POINTS_AI_CREATIVE_PENALTY,
 } from '@/types/game';
 
@@ -15,7 +14,6 @@ interface PlayerScore {
   playerId: string;
   pointsCorrectAnswer: number;
   pointsReceivedVotes: number;
-  pointsAiCreativeBonus: number;
   pointsAiCreativePenalty: number;
 }
 
@@ -141,7 +139,6 @@ export async function POST(request: NextRequest) {
             playerId: answer.player_id,
             pointsCorrectAnswer: 0,
             pointsReceivedVotes: 0,
-            pointsAiCreativeBonus: 0,
             pointsAiCreativePenalty: 0,
           });
         }
@@ -155,7 +152,6 @@ export async function POST(request: NextRequest) {
             playerId: vote.voter_id,
             pointsCorrectAnswer: 0,
             pointsReceivedVotes: 0,
-            pointsAiCreativeBonus: 0,
             pointsAiCreativePenalty: 0,
           });
         }
@@ -221,7 +217,6 @@ export async function POST(request: NextRequest) {
       const totalRoundPoints =
         score.pointsCorrectAnswer +
         score.pointsReceivedVotes +
-        score.pointsAiCreativeBonus +
         score.pointsAiCreativePenalty;
 
       roundScoresToInsert.push({
@@ -229,7 +224,7 @@ export async function POST(request: NextRequest) {
         player_id: score.playerId,
         points_correct_answer: score.pointsCorrectAnswer,
         points_received_votes: score.pointsReceivedVotes,
-        points_ai_creative_bonus: score.pointsAiCreativeBonus,
+        points_ai_creative_bonus: 0,
         points_ai_creative_penalty: score.pointsAiCreativePenalty,
         total_round_points: totalRoundPoints,
         houses_moved: Math.max(0, totalRoundPoints),
@@ -318,12 +313,11 @@ export async function POST(request: NextRequest) {
           playerId: score.playerId,
           pointsCorrectAnswer: score.pointsCorrectAnswer,
           pointsReceivedVotes: score.pointsReceivedVotes,
-          pointsAiCreativeBonus: score.pointsAiCreativeBonus,
+          pointsAiCreativeBonus: 0,
           pointsAiCreativePenalty: score.pointsAiCreativePenalty,
           totalRoundPoints:
             score.pointsCorrectAnswer +
             score.pointsReceivedVotes +
-            score.pointsAiCreativeBonus +
             score.pointsAiCreativePenalty,
         })),
         winner,
