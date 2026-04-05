@@ -17,6 +17,17 @@ interface PlayerWithProfile extends GamePlayer {
   profile?: Profile;
 }
 
+interface RankingPlayer {
+  id: string;
+  full_name: string;
+  total_wins: number;
+  total_points: number;
+  total_games_played: number;
+  avatar_type: string | null;
+  avatar_preset_id: number | null;
+  avatar_color: string | null;
+}
+
 export default function LobbyPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -33,6 +44,25 @@ export default function LobbyPage() {
   const [inviteCode, setInviteCode] = useState<string>('');
   const [joinCode, setJoinCode] = useState<string>('');
   const [gameStarting, setGameStarting] = useState(false);
+  const [ranking, setRanking] = useState<RankingPlayer[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(true);
+
+  // Fetch top 10 ranking
+  const fetchRanking = async () => {
+    setRankingLoading(true);
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, total_wins, total_points, total_games_played, avatar_type, avatar_preset_id, avatar_color')
+      .gt('total_games_played', 0)
+      .order('total_wins', { ascending: false })
+      .order('total_points', { ascending: false })
+      .limit(10);
+
+    if (!error && data) {
+      setRanking(data as RankingPlayer[]);
+    }
+    setRankingLoading(false);
+  };
 
   // Fetch players with their profile data
   const fetchPlayers = async (gameSessionId: string) => {
@@ -152,6 +182,9 @@ export default function LobbyPage() {
       }
 
       setLoading(false);
+
+      // Fetch ranking in background
+      fetchRanking();
     };
 
     checkAuth();
@@ -362,7 +395,7 @@ export default function LobbyPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-12">
-        {!gameSession ? (
+        {!gameSession && (
           // Main Lobby
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -413,7 +446,104 @@ export default function LobbyPage() {
               </div>
             </div>
           </motion.div>
-        ) : (
+        )}
+
+        {/* Ranking Top 10 - shown only when no game session */}
+        {!gameSession && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white rounded-xl shadow-lg p-8 mb-8"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <span className="text-4xl">🏆</span>
+              <h2 className="text-2xl font-fredoka text-oxe-navy">
+                Ranking dos Maiores Ganhadores
+              </h2>
+            </div>
+
+            {rankingLoading ? (
+              <div className="text-center py-8">
+                <div className="text-3xl mb-2">⏳</div>
+                <p className="font-nunito text-gray-500">Carregando ranking...</p>
+              </div>
+            ) : ranking.length === 0 ? (
+              <div className="text-center py-8">
+                <div className="text-4xl mb-3">🎮</div>
+                <p className="font-nunito text-gray-500">
+                  Nenhuma partida finalizada ainda. Seja o primeiro a jogar!
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {ranking.map((player, idx) => {
+                  const medals = ['🥇', '🥈', '🥉'];
+                  const medal = medals[idx] || null;
+                  const isCurrentUser = player.id === user?.id;
+
+                  return (
+                    <motion.div
+                      key={player.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className={`flex items-center gap-4 p-4 rounded-lg transition-all ${
+                        isCurrentUser
+                          ? 'bg-oxe-blue bg-opacity-10 border-2 border-oxe-blue'
+                          : idx < 3
+                          ? 'bg-gradient-to-r from-oxe-light to-white'
+                          : 'bg-gray-50'
+                      }`}
+                    >
+                      {/* Position */}
+                      <div className={`w-10 h-10 flex items-center justify-center rounded-full font-fredoka font-bold text-lg ${
+                        idx === 0 ? 'bg-yellow-400 text-yellow-900' :
+                        idx === 1 ? 'bg-gray-300 text-gray-700' :
+                        idx === 2 ? 'bg-orange-300 text-orange-800' :
+                        'bg-gray-200 text-gray-600'
+                      }`}>
+                        {medal || (idx + 1)}
+                      </div>
+
+                      {/* Player Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-fredoka text-oxe-navy truncate">
+                          {player.full_name || 'Jogador'}
+                          {isCurrentUser && (
+                            <span className="ml-2 text-xs bg-oxe-blue text-white px-2 py-0.5 rounded-full font-nunito">
+                              Você
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs font-nunito text-gray-500">
+                          {player.total_games_played} {player.total_games_played === 1 ? 'partida' : 'partidas'}
+                        </p>
+                      </div>
+
+                      {/* Stats */}
+                      <div className="flex items-center gap-4 text-right">
+                        <div>
+                          <p className="font-fredoka text-lg text-oxe-navy">{player.total_wins}</p>
+                          <p className="text-xs font-nunito text-gray-500">
+                            {player.total_wins === 1 ? 'vitória' : 'vitórias'}
+                          </p>
+                        </div>
+                        <div className="w-px h-8 bg-gray-300"></div>
+                        <div>
+                          <p className="font-fredoka text-lg text-oxe-blue">{player.total_points}</p>
+                          <p className="text-xs font-nunito text-gray-500">pontos</p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {gameSession && (
           // Game Waiting Room Panel
           <motion.div
             initial={{ opacity: 0 }}
