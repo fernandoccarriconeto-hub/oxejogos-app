@@ -499,9 +499,9 @@ export default function GamePage() {
     }
   };
 
-  // Handle moving to voting phase (captain action)
+  // Handle moving to voting phase (captain action — with fallback)
   const handleMoveToVoting = async () => {
-    if (!currentRound || !gameSession || gameSession.captain_id !== user?.id) return;
+    if (!currentRound || !gameSession || !user) return;
 
     await supabase
       .from('rounds')
@@ -532,9 +532,9 @@ export default function GamePage() {
     }
   };
 
-  // Handle calculate scores (captain action)
+  // Handle calculate scores (captain action — with fallback)
   const handleCalculateScores = async () => {
-    if (!currentRound || !gameSession || gameSession.captain_id !== user?.id) return;
+    if (!currentRound || !gameSession || !user) return;
 
     try {
       const res = await fetch('/api/game/calculate-scores', {
@@ -568,7 +568,16 @@ export default function GamePage() {
   const triggerSurprise = useCallback(async (playerId: string, playerName: string) => {
     if (!user || !gameSession) return;
 
-    if (gameSession.captain_id === user.id) {
+    // Captain (or fallback) fetches the question; others wait for realtime
+    const captainPlayer = players.find((p) => p.player_id === gameSession.captain_id);
+    const captainConnected = captainPlayer?.is_connected ?? false;
+    const isFallbackCaptain = !captainConnected && (() => {
+      const connected = players.filter((p) => p.is_connected).sort((a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
+      return connected.length > 0 && connected[0].player_id === user.id;
+    })();
+    const shouldFetch = gameSession.captain_id === user.id || isFallbackCaptain;
+
+    if (shouldFetch) {
       setSurpriseLoading(true);
       setCurrentScreen('surprise');
       setSurpriseResult(null);
@@ -712,7 +721,7 @@ export default function GamePage() {
 
   // Handle next round
   const handleNextRound = async () => {
-    if (!gameSession || gameSession.captain_id !== user?.id) return;
+    if (!gameSession || !user) return;
 
     const nextPickerIndex = (gameSession.current_theme_picker_index + 1) % gameSession.theme_picker_order.length;
 
@@ -734,6 +743,19 @@ export default function GamePage() {
 
   // Check if user is captain
   const isCaptain = gameSession?.captain_id === user?.id;
+
+  // Captain fallback: if captain is disconnected, the first connected player (by join order) can act as captain
+  const canActAsCaptain = (() => {
+    if (isCaptain) return true;
+    if (!gameSession || !user || !players.length) return false;
+    const captain = players.find((p) => p.player_id === gameSession.captain_id);
+    if (captain && captain.is_connected) return false; // captain is connected, no fallback needed
+    // Captain disconnected — first connected player by join order takes over
+    const connectedPlayers = players
+      .filter((p) => p.is_connected)
+      .sort((a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
+    return connectedPlayers.length > 0 && connectedPlayers[0].player_id === user.id;
+  })();
 
   const renderScreen = () => {
     switch (currentScreen) {
@@ -857,7 +879,7 @@ export default function GamePage() {
                     <div className="text-5xl mb-4">✅</div>
                     <p className="font-fredoka text-xl text-oxe-navy">Resposta enviada!</p>
                     <p className="text-gray-500 font-nunito mt-2">Aguardando os outros jogadores...</p>
-                    {isCaptain && (
+                    {canActAsCaptain && (
                       <button
                         onClick={handleMoveToVoting}
                         className="mt-6 px-6 py-3 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all"
@@ -932,7 +954,7 @@ export default function GamePage() {
               <div className="text-5xl mb-4">🗳️</div>
               <p className="font-fredoka text-xl text-oxe-navy">Voto registrado!</p>
               <p className="text-gray-500 font-nunito mt-2">Aguardando os outros jogadores votarem...</p>
-              {isCaptain && (
+              {canActAsCaptain && (
                 <button
                   onClick={handleCalculateScores}
                   className="mt-6 px-6 py-3 bg-oxe-gold text-oxe-navy rounded-lg font-fredoka font-bold hover:bg-opacity-90 transition-all"
@@ -1097,7 +1119,7 @@ export default function GamePage() {
                 )}
               </div>
 
-              {isCaptain && (
+              {canActAsCaptain && (
                 <button
                   onClick={handleNextRound}
                   className="w-full px-6 py-4 bg-oxe-blue text-white rounded-lg font-fredoka font-bold text-lg hover:bg-opacity-90 transition-all"
@@ -1105,7 +1127,7 @@ export default function GamePage() {
                   Próxima Rodada
                 </button>
               )}
-              {!isCaptain && (
+              {!canActAsCaptain && (
                 <p className="text-center text-gray-500 font-nunito">
                   Aguardando o capitão iniciar a próxima rodada...
                 </p>
