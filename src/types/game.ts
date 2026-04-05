@@ -39,11 +39,9 @@ export const MAX_PLAYERS = 12;
 export const SURPRISE_HOUSES_INTERVAL = 3;
 
 // Points
-export const POINTS_CORRECT_ANSWER = 3;
+export const POINTS_CORRECT_ANSWER = 2;
 export const POINTS_RECEIVED_VOTE = 2;
-export const POINTS_AI_CREATIVE_PENALTY = -1;
 export const SURPRISE_CORRECT_BONUS = 2;
-export const SURPRISE_WRONG_PENALTY = -1;
 
 // Interfaces
 export interface Profile {

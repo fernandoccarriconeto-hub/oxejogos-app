@@ -34,10 +34,9 @@ export function isSurpriseHouse(position: number): boolean {
 }
 
 export function getPointsDescription(points: number): string {
-  if (points >= 7) return 'Incrível! 🔥';
-  if (points >= 5) return 'Muito bem! 🎯';
-  if (points >= 3) return 'Boa! 👍';
+  if (points >= 6) return 'Incrível! 🔥';
+  if (points >= 4) return 'Muito bem! 🎯';
+  if (points >= 2) return 'Boa! 👍';
   if (points >= 1) return 'Quase lá! 💪';
-  if (points === 0) return 'Próxima vez! 😊';
-  return 'Oxe! 😅';
+  return 'Próxima vez! 😊';
 }

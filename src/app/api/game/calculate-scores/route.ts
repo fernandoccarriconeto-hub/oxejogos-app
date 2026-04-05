@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import {
   POINTS_CORRECT_ANSWER,
   POINTS_RECEIVED_VOTE,
-  POINTS_AI_CREATIVE_PENALTY,
 } from '@/types/game';
 
 interface CalculateScoresRequest {
@@ -12,9 +11,10 @@ interface CalculateScoresRequest {
 
 interface PlayerScore {
   playerId: string;
+  playerName: string;
   pointsCorrectAnswer: number;
   pointsReceivedVotes: number;
-  pointsAiCreativePenalty: number;
+  votersWhoVotedForMe: string[]; // names of players who voted for this player
 }
 
 export async function POST(request: NextRequest) {
@@ -57,6 +57,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const gameSession = round.game_sessions;
+
     // Check if scores already calculated for this round (prevent duplicates)
     const { data: existingScores } = await supabase
       .from('round_scores')
@@ -71,8 +73,6 @@ export async function POST(request: NextRequest) {
         .select('*')
         .eq('round_id', roundId);
 
-      // Check for winner
-      const gameSession = round.game_sessions;
       const { data: gamePlayers } = await supabase
         .from('game_players')
         .select('*')
@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
             pointsAiCreativeBonus: s.points_ai_creative_bonus,
             pointsAiCreativePenalty: s.points_ai_creative_penalty,
             totalRoundPoints: s.total_round_points,
+            breakdown: s.breakdown || null,
           })) || [],
           winner: winner?.player_id || null,
           gameFinished: !!winner,
@@ -127,9 +128,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get all players with profiles for name lookup
+    const { data: gamePlayers } = await supabase
+      .from('game_players')
+      .select('*')
+      .eq('game_session_id', gameSession.id);
+
+    const playerIds = gamePlayers?.map((p) => p.player_id) || [];
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', playerIds);
+
+    const profileMap = new Map(profiles?.map((p) => [p.id, p.full_name]) || []);
+    const getPlayerName = (id: string) => profileMap.get(id) || 'Jogador';
+
     // Calculate scores for each player
     const playerScores: Map<string, PlayerScore> = new Map();
-    const gameSession = round.game_sessions;
 
     // Initialize all players with 0 scores
     if (answers) {
@@ -137,9 +152,10 @@ export async function POST(request: NextRequest) {
         if (!playerScores.has(answer.player_id)) {
           playerScores.set(answer.player_id, {
             playerId: answer.player_id,
+            playerName: getPlayerName(answer.player_id),
             pointsCorrectAnswer: 0,
             pointsReceivedVotes: 0,
-            pointsAiCreativePenalty: 0,
+            votersWhoVotedForMe: [],
           });
         }
       });
@@ -150,15 +166,16 @@ export async function POST(request: NextRequest) {
         if (!playerScores.has(vote.voter_id)) {
           playerScores.set(vote.voter_id, {
             playerId: vote.voter_id,
+            playerName: getPlayerName(vote.voter_id),
             pointsCorrectAnswer: 0,
             pointsReceivedVotes: 0,
-            pointsAiCreativePenalty: 0,
+            votersWhoVotedForMe: [],
           });
         }
       });
     }
 
-    // Award points for voting for correct AI answer
+    // Award points for voting for correct AI answer (+2 pts)
     if (votes) {
       votes.forEach((vote) => {
         if (vote.voted_ai_correct) {
@@ -171,39 +188,22 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Award points for votes received
+    // Award points for votes received (+2 pts per vote) and track who voted
     if (votes && answers) {
-      const voteCounts = new Map<string, number>();
+      // Map answer_id -> player_id (answer owner)
+      const answerOwnerMap = new Map<string, string>();
+      answers.forEach((a) => answerOwnerMap.set(a.id, a.player_id));
 
       votes.forEach((vote) => {
         if (vote.voted_answer_id) {
-          const currentCount = voteCounts.get(vote.voted_answer_id) || 0;
-          voteCounts.set(vote.voted_answer_id, currentCount + 1);
-        }
-      });
-
-      answers.forEach((answer) => {
-        const voteCount = voteCounts.get(answer.id) || 0;
-        if (voteCount > 0) {
-          const score = playerScores.get(answer.player_id);
-          if (score) {
-            score.pointsReceivedVotes += voteCount * POINTS_RECEIVED_VOTE;
-            playerScores.set(answer.player_id, score);
-          }
-        }
-      });
-    }
-
-    // Award points for voting for AI correct answer (player identified the correct one)
-    // and for voting for AI creative answer (player was tricked by creative answer)
-    if (votes) {
-      votes.forEach((vote) => {
-        // If player voted for the AI creative answer (was fooled), penalize
-        if (vote.voted_ai_creative) {
-          const score = playerScores.get(vote.voter_id);
-          if (score) {
-            score.pointsAiCreativePenalty += POINTS_AI_CREATIVE_PENALTY;
-            playerScores.set(vote.voter_id, score);
+          const answerOwnerId = answerOwnerMap.get(vote.voted_answer_id);
+          if (answerOwnerId) {
+            const score = playerScores.get(answerOwnerId);
+            if (score) {
+              score.pointsReceivedVotes += POINTS_RECEIVED_VOTE;
+              score.votersWhoVotedForMe.push(getPlayerName(vote.voter_id));
+              playerScores.set(answerOwnerId, score);
+            }
           }
         }
       });
@@ -212,12 +212,24 @@ export async function POST(request: NextRequest) {
     // Insert round scores and collect for database
     const roundScoresToInsert: any[] = [];
     const gamePlayersToUpdate: any[] = [];
+    const scoreBreakdowns: any[] = [];
 
     playerScores.forEach((score) => {
       const totalRoundPoints =
         score.pointsCorrectAnswer +
-        score.pointsReceivedVotes +
-        score.pointsAiCreativePenalty;
+        score.pointsReceivedVotes;
+
+      // Build breakdown description
+      const parts: string[] = [];
+      if (score.pointsCorrectAnswer > 0) {
+        parts.push(`+${score.pointsCorrectAnswer} acerto`);
+      }
+      if (score.pointsReceivedVotes > 0) {
+        const voterNames = score.votersWhoVotedForMe.join(', ');
+        const voteCount = score.votersWhoVotedForMe.length;
+        parts.push(`+${score.pointsReceivedVotes} voto${voteCount > 1 ? 's' : ''} (${voterNames})`);
+      }
+      const breakdown = parts.length > 0 ? parts.join(' ') : 'Nenhum ponto';
 
       roundScoresToInsert.push({
         round_id: roundId,
@@ -225,14 +237,24 @@ export async function POST(request: NextRequest) {
         points_correct_answer: score.pointsCorrectAnswer,
         points_received_votes: score.pointsReceivedVotes,
         points_ai_creative_bonus: 0,
-        points_ai_creative_penalty: score.pointsAiCreativePenalty,
+        points_ai_creative_penalty: 0,
         total_round_points: totalRoundPoints,
-        houses_moved: Math.max(0, totalRoundPoints),
+        houses_moved: totalRoundPoints,
+      });
+
+      scoreBreakdowns.push({
+        playerId: score.playerId,
+        playerName: score.playerName,
+        pointsCorrectAnswer: score.pointsCorrectAnswer,
+        pointsReceivedVotes: score.pointsReceivedVotes,
+        votersWhoVotedForMe: score.votersWhoVotedForMe,
+        totalRoundPoints,
+        breakdown,
       });
 
       gamePlayersToUpdate.push({
         playerId: score.playerId,
-        housesMove: Math.max(0, totalRoundPoints),
+        housesMove: totalRoundPoints,
       });
     });
 
@@ -309,17 +331,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         roundId,
-        scores: Array.from(playerScores.values()).map((score) => ({
-          playerId: score.playerId,
-          pointsCorrectAnswer: score.pointsCorrectAnswer,
-          pointsReceivedVotes: score.pointsReceivedVotes,
-          pointsAiCreativeBonus: 0,
-          pointsAiCreativePenalty: score.pointsAiCreativePenalty,
-          totalRoundPoints:
-            score.pointsCorrectAnswer +
-            score.pointsReceivedVotes +
-            score.pointsAiCreativePenalty,
-        })),
+        scores: scoreBreakdowns,
         winner,
         gameFinished: !!winner,
       },
